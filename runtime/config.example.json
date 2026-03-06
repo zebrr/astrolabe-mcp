@@ -1,0 +1,24 @@
+{
+  "projects": {
+    "my-project": "/path/to/my-project",
+    "another-project": "/path/to/another-project"
+  },
+  "index_path": ".doc-index.json",
+  "index_extensions": [
+    ".md", ".yaml", ".yml", ".txt", ".py", ".sh",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
+    ".mp3", ".wav", ".ogg", ".flac",
+    ".mp4", ".mov", ".avi", ".webm"
+  ],
+  "ignore_dirs": [
+    "src", "lib", "app",
+    "tests", "test",
+    "dist", "build", "node_modules", ".venv", "venv",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".git", ".idea", ".vscode", ".claude", ".qwen",
+    "tmp", "temp"
+  ],
+  "ignore_files": ["*.pyc", "*.lock", ".env*"],
+  "max_file_size_kb": 100
+}

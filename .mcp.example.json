@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "astrolabe": {
+      "type": "stdio",
+      "command": "/absolute/path/to/astrolabe-mcp/.venv/bin/python",
+      "args": ["-m", "astrolabe.server"],
+      "cwd": "/absolute/path/to/astrolabe-mcp",
+      "env": {
+        "ASTROLABE_CONFIG": "/absolute/path/to/astrolabe-mcp/runtime/config.json"
+      }
+    }
+  }
+}

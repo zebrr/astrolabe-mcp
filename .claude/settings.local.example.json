@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(pip:*)",
+      "Bash(python:*)",
+      "Bash(date:*)",
+      "Bash(git:*)",
+      "Bash(pytest:*)",
+      "mcp__astrolabe__get_cosmos",
+      "mcp__astrolabe__search_docs",
+      "mcp__astrolabe__get_doc",
+      "mcp__astrolabe__read_doc",
+      "mcp__astrolabe__reindex_tool",
+      "mcp__astrolabe__list_docs",
+      "mcp__astrolabe__update_index_tool",
+      "Skill(enrich-index)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "astrolabe"
+  ]
+}

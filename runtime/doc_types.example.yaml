@@ -1,0 +1,53 @@
+document_types:
+
+  instruction:
+    description: >
+      Project instruction, agent rules and workflow.
+      Usually CLAUDE.md or PROJECT.md in project root.
+    examples:
+      - "CLAUDE.md"
+      - "PROJECT.md"
+
+  reference:
+    description: >
+      Reference material on API, tool, approach, or methodology.
+      Often reused across projects.
+    examples:
+      - "docs/references/API Guide.md"
+
+  spec:
+    description: >
+      Technical specification, architecture, design document.
+      Describes how a system or module works.
+    examples:
+      - "docs/specs/spec_server.md"
+
+  task:
+    description: >
+      Work assignment for an agent. Contains context, steps,
+      acceptance criteria, expected results.
+    examples:
+      - "docs/tasks/PROJ-001.md"
+
+  binary_doc:
+    description: >
+      Binary document — PDF, Word, Excel, PowerPoint.
+      Cannot be read as text. Classified by filename.
+    examples:
+      - "report.pdf"
+      - "presentation.pptx"
+
+  media:
+    description: >
+      Media file — image, audio, or video. Classified by file extension.
+      Do not attempt to read file content.
+    examples:
+      - "screenshot.png"
+      - "demo.mp4"
+
+  undef:
+    description: >
+      Catch-all type for files that do not fit any other type.
+      Assign undef and explain in summary what the file contains.
+    examples:
+      - "notes.txt"
