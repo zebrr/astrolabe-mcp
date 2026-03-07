@@ -58,7 +58,7 @@ Top-level index structure stored in `.doc-index.json`.
 
 ```python
 class IndexData(BaseModel):
-    version: str = "0.2.0"
+    version: str = __version__         # from astrolabe.__version__ (pyproject.toml)
     indexed_at: datetime               # last full reindex timestamp
     documents: dict[str, DocCard]      # doc_id → DocCard
 ```
@@ -101,6 +101,7 @@ class CosmosResponse(BaseModel):
     enriched_documents: int
     stale_documents: int
     empty_documents: int
+    desync_documents: int = 0    # files missing on disk or enriched_at > modified
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 ```

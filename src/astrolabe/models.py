@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from astrolabe import __version__
+
 
 class AppConfig(BaseModel):
     """Application configuration loaded from config.json."""
@@ -53,7 +55,7 @@ class DocCard(BaseModel):
 class IndexData(BaseModel):
     """Top-level index structure stored in .doc-index.json."""
 
-    version: str = "0.2.0"
+    version: str = __version__
     indexed_at: datetime
     documents: dict[str, DocCard] = {}
 
@@ -84,6 +86,7 @@ class CosmosResponse(BaseModel):
     enriched_documents: int
     stale_documents: int
     empty_documents: int
+    desync_documents: int = 0
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 

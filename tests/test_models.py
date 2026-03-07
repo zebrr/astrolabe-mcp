@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from astrolabe import __version__
 from astrolabe.models import (
     AppConfig,
     CosmosResponse,
@@ -122,7 +123,7 @@ class TestDocCard:
 class TestIndexData:
     def test_empty_index(self) -> None:
         index = IndexData(indexed_at=datetime(2026, 3, 6, tzinfo=UTC))
-        assert index.version == "0.2.0"
+        assert index.version == __version__
         assert len(index.documents) == 0
 
     def test_index_with_documents(self) -> None:
@@ -156,14 +157,14 @@ class TestIndexData:
         )
         data = index.model_dump(mode="json")
         restored = IndexData.model_validate(data)
-        assert restored.version == "0.2.0"
+        assert restored.version == __version__
         assert "k2::docs/arch.md" in restored.documents
 
 
 class TestCosmosResponse:
     def test_creation(self) -> None:
         resp = CosmosResponse(
-            server_version="0.2.0",
+            server_version="0.2.2",
             indexed_at=datetime(2026, 3, 6, tzinfo=UTC),
             total_documents=48,
             enriched_documents=35,

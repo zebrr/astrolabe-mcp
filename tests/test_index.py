@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from astrolabe import __version__
 from astrolabe.index import (
+    _compute_hash,
     build_index,
     load_index,
     reindex,
@@ -82,6 +84,31 @@ class TestScanProject:
         assert "deps.lock" not in filenames
 
 
+class TestComputeHash:
+    def test_crlf_and_lf_produce_same_hash(self, tmp_path: Path) -> None:
+        lf_file = tmp_path / "lf.txt"
+        crlf_file = tmp_path / "crlf.txt"
+        lf_file.write_bytes(b"line1\nline2\nline3\n")
+        crlf_file.write_bytes(b"line1\r\nline2\r\nline3\r\n")
+        assert _compute_hash(lf_file) == _compute_hash(crlf_file)
+
+    def test_isolated_cr_not_affected(self, tmp_path: Path) -> None:
+        normal = tmp_path / "normal.txt"
+        with_cr = tmp_path / "with_cr.txt"
+        normal.write_bytes(b"hello\nworld")
+        with_cr.write_bytes(b"hello\rworld")
+        assert _compute_hash(normal) != _compute_hash(with_cr)
+
+    def test_binary_content_stable(self, tmp_path: Path) -> None:
+        f = tmp_path / "binary.bin"
+        data = bytes(range(256))
+        f.write_bytes(data)
+        h1 = _compute_hash(f)
+        h2 = _compute_hash(f)
+        assert h1 == h2
+        assert len(h1) == 32
+
+
 class TestLoadSaveIndex:
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         card = DocCard(
@@ -130,7 +157,7 @@ class TestBuildIndex:
     def test_builds_from_config(self, fake_project: Path, sample_config: AppConfig) -> None:
         index = build_index(sample_config)
         assert len(index.documents) == 5  # README, CLAUDE, guide, notes, config
-        assert index.version == "0.2.0"
+        assert index.version == __version__
 
     def test_skips_nonexistent_projects(self, tmp_path: Path) -> None:
         config = AppConfig(
@@ -184,17 +211,19 @@ class TestReindex:
         assert stats.new == 1
         assert "my-project::new.md" in index2.documents
 
-    def test_reindex_detects_removed_files(
+    def test_reindex_detects_missing_file_as_desync(
         self, fake_project: Path, sample_config: AppConfig
     ) -> None:
         index, _ = reindex(sample_config)
 
-        # Remove a file
+        # Remove a file — should be desync, not removed
         (fake_project / "README.md").unlink()
 
         index2, stats = reindex(sample_config, existing=index)
-        assert stats.removed == 1
-        assert "my-project::README.md" not in index2.documents
+        assert stats.desync == 1
+        assert stats.removed == 0
+        # Card preserved
+        assert "my-project::README.md" in index2.documents
 
     def test_reindex_detects_changed_files(
         self, fake_project: Path, sample_config: AppConfig
@@ -272,3 +301,185 @@ class TestUpdateCard:
         index = IndexData(indexed_at=datetime(2026, 3, 6, tzinfo=UTC))
         with pytest.raises(KeyError, match="ghost::doc.md"):
             update_card(index, "ghost::doc.md", type="spec")
+
+
+class TestPassthrough:
+    def test_foreign_project_cards_preserved(self, tmp_path: Path) -> None:
+        """Cards from projects not in config survive reindex."""
+        proj_a = tmp_path / "a"
+        proj_a.mkdir()
+        (proj_a / "doc.md").write_text("A")
+
+        config = AppConfig(
+            projects={"a": proj_a},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+
+        # Existing index has cards from projects a and b
+        foreign_card = DocCard(
+            project="b",
+            filename="foreign.md",
+            rel_path="foreign.md",
+            size=50,
+            modified=datetime(2026, 3, 5, tzinfo=UTC),
+            content_hash="xyz",
+            type="spec",
+            summary="Foreign doc",
+            enriched_at=datetime(2026, 3, 5, tzinfo=UTC),
+        )
+        index, _ = reindex(config)
+        index.documents[foreign_card.doc_id] = foreign_card
+
+        # Reindex with only project a in config
+        index2, stats = reindex(config, existing=index)
+        assert stats.passthrough == 1
+        assert "b::foreign.md" in index2.documents
+        # Enrichment preserved
+        assert index2.documents["b::foreign.md"].type == "spec"
+        assert index2.documents["b::foreign.md"].summary == "Foreign doc"
+
+    def test_removed_file_from_configured_project_is_desync(self, tmp_path: Path) -> None:
+        """Missing file from configured project = desync, not removed."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Delete the file
+        (proj / "doc.md").unlink()
+
+        index2, stats = reindex(config, existing=index)
+        assert stats.desync == 1
+        assert stats.removed == 0
+        assert "proj::doc.md" in index2.documents
+
+
+class TestDesync:
+    def test_enriched_at_greater_than_modified_is_desync(self, tmp_path: Path) -> None:
+        """Card enriched on another machine (enriched_at > modified) = desync."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Simulate enrichment from another machine (far future)
+        card = index.documents["proj::doc.md"]
+        card.enriched_at = datetime(2099, 1, 1, tzinfo=UTC)
+
+        index2, stats = reindex(config, existing=index)
+        assert stats.desync == 1
+        assert stats.unchanged == 1  # card is still unchanged
+        assert "proj::doc.md" in index2.documents
+
+
+class TestForceReindex:
+    def test_force_resets_enrichment(self, tmp_path: Path) -> None:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+        card = index.documents["proj::doc.md"]
+        card.type = "spec"
+        card.summary = "A spec"
+        card.enriched_at = datetime(2026, 3, 5, tzinfo=UTC)
+
+        index2, stats = reindex(config, existing=index, force=True)
+        assert stats.new == 1
+        new_card = index2.documents["proj::doc.md"]
+        assert new_card.type is None
+        assert new_card.summary is None
+        assert new_card.enriched_at is None
+
+    def test_force_preserves_foreign_cards(self, tmp_path: Path) -> None:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Add foreign card
+        foreign = DocCard(
+            project="other",
+            filename="f.md",
+            rel_path="f.md",
+            size=10,
+            modified=datetime(2026, 3, 5, tzinfo=UTC),
+            content_hash="abc",
+            type="guide",
+            enriched_at=datetime(2026, 3, 5, tzinfo=UTC),
+        )
+        index.documents[foreign.doc_id] = foreign
+
+        index2, stats = reindex(config, existing=index, force=True)
+        assert stats.passthrough == 1
+        assert "other::f.md" in index2.documents
+        assert index2.documents["other::f.md"].type == "guide"
+
+    def test_force_removes_desync_cards(self, tmp_path: Path) -> None:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_path=tmp_path / ".doc-index.json",
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Delete file — will be desync without force, removed with force
+        (proj / "doc.md").unlink()
+
+        index2, stats = reindex(config, existing=index, force=True)
+        assert stats.removed == 1
+        assert "proj::doc.md" not in index2.documents
+
+    def test_default_force_false_backward_compatible(
+        self, fake_project: Path, sample_config: AppConfig
+    ) -> None:
+        index, _ = reindex(sample_config)
+        index2, stats = reindex(sample_config, existing=index)
+        assert stats.unchanged == 5
+        assert stats.new == 0

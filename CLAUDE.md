@@ -18,38 +18,36 @@ MCP server for navigating the constellation of knowledge scattered across projec
 - Imports: stdlib → third-party → local, absolute imports
 - `pytest` for tests, `tmp_path` fixtures (no real project paths)
 
-## Quality Checks (before every step completion)
+## Communication
 
-```bash
-source .venv/bin/activate
-ruff check src/ tests/
-ruff format src/ tests/
-mypy src/
-python -m pytest -v
-```
+- Language: Russian (discussion, user-docs), English (code, specs, docstrings, comments)
+- When uncertain: **ASK**, don't assume
+- Commits: only on user request
 
 ## Artifacts
 
 | File | Purpose | Changed by |
 |------|---------|-----------|
 | `CLAUDE.md` | Mechanics: rules, commands, conventions | Together with user |
+| `docs/CONCEPT.md` | Requirements source of truth | Read-only (update with user approval on scope changes) |
 | `docs/ARCHITECTURE.md` | Navigation: structure, modules, key context (keep short) | Agent, after each step |
 | `docs/PLAN.md` | Current milestone work plan | Agent |
 | `docs/PROGRESS.md` | What was done, decisions, notes | Agent |
-| `docs/CONCEPT.md` | Requirements source of truth | Read-only |
 | `docs/specs/*.md` | Module specs (read INSTEAD of code) | Agent |
 | `docs/archive/` | Archived PLAN.md + PROGRESS.md from past milestones | Agent |
+| `pyproject.toml` | Package metadata, version (semver) | Agent |
 | `runtime/` | Config, doc_types, index (not committed except examples) | User + server |
-
-### Spec Statuses (strictly three values)
-
-- `DRAFT` — spec written, code not yet implemented (spec is written BEFORE code)
-- `IN_PROGRESS` — spec updated for new requirements, code being aligned (spec first, then code)
-- `READY` — spec stable, code matches spec, no work in progress
+| `.claude/skills/` | Active agent skills | Agent |
+| `docs/skills_drafts/` | Draft skills before activation | Agent |
 
 ## Session Start
 
-Check if `docs/PLAN.md` exists:
+**Astrolabe index check** (if astrolabe MCP is connected):
+- Call `get_cosmos()` → check `desync_documents`, `stale_documents`, `empty_documents`
+- If `desync_documents > 0` — warn user: "N files out of sync, may need git pull in projects X, Y"
+- If many stale/empty cards — suggest: "Run /enrich-index to update index coverage"
+
+**Development state** — check if `docs/PLAN.md` exists:
 
 **docs/PLAN.md exists → check state:**
 
@@ -76,19 +74,57 @@ Check if `docs/PLAN.md` exists:
 - "No active plan. What would you like to do?"
   - Create a new milestone plan (design phases, write PLAN.md)
   - Ad-hoc task (work without a plan, just execute what's asked)
+  - Server/index work (enrichment, reindex, skills — see Astrolabe MCP Usage)
 - Do NOT auto-create plans without user input
 
-## Work Rhythm
+## Work Modes
 
-After completing each plan step:
+Three modes of working, explicitly:
 
-1. Quality checks (ruff + mypy + pytest)
-2. Update spec status → `READY`
-3. Mark step done in `docs/PLAN.md` (check the box)
-4. Review all remaining steps — still relevant? Need update/split/remove?
-5. Append event to `docs/PROGRESS.md` (with real timestamp)
-6. Update `docs/ARCHITECTURE.md` if structure changed
-7. If review required → set STATUS: `WAITING_REVIEW`, show result to user
+1. **Planned work** — feature, refactor, milestone. Has PLAN.md + PROGRESS.md. Full Code Change Pipeline with all steps.
+2. **Ad-hoc task** — no plan, but same Code Change Pipeline for any code/config/spec changes. Steps marked `[Planned]` are skipped.
+3. **Server/index work** — enrichment, reindex, skills usage. No code changes, no pipeline. Follow Astrolabe MCP Usage rules.
+
+## Code Change Pipeline
+
+Applies to **any** work that touches code, configs, or specs — both planned and ad-hoc.
+
+**Before work:**
+1. `[Planned]` Step must be written in PLAN.md before any code changes (follow PLAN.md Rules)
+2. If spec exists or is needed → update spec FIRST (status: `DRAFT` or `IN_PROGRESS`)
+
+**Work:**
+3. Write/modify code
+4. Quality checks (see commands below)
+
+**After work:**
+5. Update spec status → `READY` (if spec was changed)
+6. Bump version in `pyproject.toml` (if significant change, semver)
+7. Update docs if affected: `ARCHITECTURE.md`, `README.md`
+8. If step creates/modifies a skill → update both `docs/skills_drafts/` and `.claude/skills/`
+9. `[Planned]` Mark step done in PLAN.md, review remaining steps — still relevant? Need update/split/remove? (follow PLAN.md Rules)
+10. `[Planned]` Append event to PROGRESS.md (with real timestamp via `date "+%Y-%m-%d %H:%M"`) (follow PROGRESS.md Rules)
+
+## Quality Checks
+
+```bash
+source .venv/bin/activate
+ruff check src/ tests/
+ruff format src/ tests/
+mypy src/
+python -m pytest -v
+```
+
+## Spec Rules
+
+Specs live in `docs/specs/*.md`. Read specs INSTEAD of code for module context.
+
+**Statuses (strictly three values):**
+- `DRAFT` — spec written, code not yet implemented (spec is written BEFORE code)
+- `IN_PROGRESS` — spec updated for new requirements, code being aligned (spec first, then code)
+- `READY` — spec stable, code matches spec, no work in progress
+
+**Spec-first rule:** always update the spec BEFORE changing code. Never code first and document later.
 
 ## PLAN.md Rules
 
@@ -97,7 +133,6 @@ After completing each plan step:
 **Execution:**
 - Execute steps sequentially, top to bottom
 - Check the box when done — NEVER edit or delete completed steps
-- After each step, review remaining steps: still relevant? Need update?
 
 **Modifying future steps:**
 - **Update:** change description of a future step in place
@@ -146,8 +181,33 @@ After completing each plan step:
 - If no → move on silently
 - This creates a self-improvement loop: the rules evolve as we learn what works
 
-## Communication
+## Astrolabe MCP Usage
 
-- Language: Russian (discussion, user-docs), English (code, specs, docstrings, comments)
-- When uncertain: **ASK**, don't assume
-- Commits: only on user request
+Rules for working with astrolabe MCP tools. This section is universal — copy to any project connected to astrolabe.
+
+### Reindex
+
+- After adding/removing/renaming files → call `reindex_tool()`
+- After mass changes or broken index → `reindex_tool(force=True)`
+- Reindex preserves enrichment; `force=True` resets it for configured projects
+- Cards from foreign projects (not in local config) are always preserved (pass-through)
+
+### Enrichment
+
+- **ALWAYS** use `/enrich-index` skill — **NEVER** enrich cards manually
+- The skill knows document types, summary format, keyword style
+- Manual `update_index_tool()` only for single-field corrections (e.g., fixing a wrong type)
+
+### Search & Navigation
+
+- `get_cosmos()` — session overview, index health
+- `search_docs(query)` — cross-project knowledge search
+- `list_docs(project?, type?, stale?)` — browse by category
+- `get_card(doc_id)` — inspect card metadata (type, summary, keywords)
+- `read_doc(doc_id, section?)` — targeted reading by heading
+
+### Desync
+
+- `desync_documents > 0` → files missing locally or enrichment from another machine
+- Warn user, suggest `git pull` for affected projects
+- To clean up genuinely deleted files → `reindex_tool(force=True)`

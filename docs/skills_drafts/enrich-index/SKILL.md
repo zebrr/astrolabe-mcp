@@ -8,7 +8,7 @@ description: >-
 context: fork
 allowed-tools:
   - mcp__astrolabe__list_docs
-  - mcp__astrolabe__get_doc
+  - mcp__astrolabe__read_doc
   - mcp__astrolabe__update_index_tool
   - mcp__astrolabe__get_cosmos
 ---
@@ -22,8 +22,8 @@ Batch-enrich document cards in the astrolabe index. You read each file, understa
 1. Call `get_cosmos()` to see available projects and document types
 2. Call `list_docs(stale=true)` to get all cards that need enrichment (empty or content-changed)
 3. For each card, in batches of 5-10:
-   a. If the file has a binary extension (media or binary_doc) → assign the appropriate type, summary by filename, skip `get_doc()`
-   b. Otherwise, call `get_doc(doc_id)` to read the file content
+   a. If the file has a binary extension (media or binary_doc) → assign the appropriate type, summary by filename, skip `read_doc()`
+   b. Otherwise, call `read_doc(doc_id)` to read the file content
    c. Analyze the content and determine:
       - **type** — one of the document types from `get_cosmos().document_types`
       - **summary** — 1-2 sentence description of what the file contains and why it matters
@@ -74,7 +74,7 @@ Use ONLY these types. If a file does not fit any type — assign `undef`. Do NOT
 
 ## Binary & Media Files
 
-These files cannot be read as text. Do NOT call `get_doc()` — it will return `[binary file]`. Classify by filename and location.
+These files cannot be read as text. Do NOT call `read_doc()` — it will return `[binary file]`. Classify by filename and location.
 
 **binary_doc** — files with extensions: .pdf, .doc, .docx, .xls, .xlsx, .ppt, .pptx
 

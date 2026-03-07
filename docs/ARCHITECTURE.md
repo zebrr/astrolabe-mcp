@@ -59,7 +59,7 @@ models.py ← search.py ←───────────┘
 
 ## MCP Tools (7)
 
-`get_cosmos`, `list_docs`, `search_docs`, `read_doc`, `get_doc`, `update_index`, `reindex`
+`get_cosmos`, `list_docs`, `search_docs`, `get_card`, `read_doc`, `update_index`, `reindex`
 
 See `docs/CONCEPT.md` for full tool specifications.
 
@@ -67,6 +67,8 @@ See `docs/CONCEPT.md` for full tool specifications.
 
 - Index stored as JSON (`.doc-index.json`), `filelock` for concurrent access
 - `ignore_dirs` / `ignore_files` fully configurable in config.json
-- Content hash: MD5, computed only on mtime mismatch
+- Content hash: MD5 with CRLF→LF normalization for cross-platform consistency
 - Search: token-level matching with field weights (keywords 3.0, filename 2.5, headings 2.0, summary 1.0)
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings
+- Shared index: pass-through for foreign project cards, desync detection for missing files
+- Force reindex: `reindex(force=True)` resets enrichment, respects pass-through

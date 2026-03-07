@@ -43,14 +43,17 @@ Full index build from scratch. Scans all projects, creates IndexData.
 - Skips non-existent project paths with a warning (via `logging`)
 - Sets `indexed_at` to current UTC time
 
-### `reindex(config: AppConfig, existing: IndexData | None = None) -> tuple[IndexData, ReindexStats]`
+### `reindex(config: AppConfig, existing: IndexData | None = None, *, force: bool = False) -> tuple[IndexData, ReindexStats]`
 
 Rescan filesystem and merge with existing index.
 
 - New files: added with empty enrichment
-- Removed files: deleted from index
 - Changed files (content_hash mismatch): file metadata updated, card marked stale (enrichment preserved)
 - Unchanged files: kept as-is
+- **Pass-through**: cards from projects NOT in `config.projects` are preserved as-is (not removed)
+- **Desync**: cards from projects in config where file is missing on disk are preserved as desync (not removed)
+- **Desync (informational)**: if `enriched_at > fresh_card.modified`, card is counted as desync (enrichment from another machine)
+- **`force=True`**: fresh cards created without enrichment (clean rebuild). Desync cards (missing files) are removed. Pass-through cards still preserved.
 - Returns updated IndexData + stats
 
 ### `update_card(index: IndexData, doc_id: str, *, type: str | None = None, summary: str | None = None, keywords: list[str] | None = None, headings: list[str] | None = None) -> DocCard`
@@ -71,13 +74,15 @@ class ReindexStats:
     removed: int
     stale: int
     unchanged: int
+    passthrough: int    # cards from projects not in config, preserved as-is
+    desync: int         # cards where file is missing or enriched_at > modified
 ```
 
 ## Internal Functions
 
 ### `_compute_hash(file_path: Path) -> str`
 
-MD5 hex digest of file contents via `Path.read_bytes()`.
+MD5 hex digest of file contents via `Path.read_bytes()`. Normalizes line endings (`\r\n` → `\n`) before hashing to ensure cross-platform consistency.
 
 ### `_matches_ignore_files(filename: str, patterns: list[str]) -> bool`
 

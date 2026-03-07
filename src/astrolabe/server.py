@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from astrolabe import __version__
 from astrolabe.config import load_config, load_doc_types
 from astrolabe.index import build_index, load_index, reindex, save_index, update_card
 from astrolabe.models import AppConfig, CosmosResponse, IndexData, ProjectSummary, TypeSummary
@@ -55,10 +56,11 @@ def _get_state() -> tuple[AppConfig, IndexData]:
 
 @mcp.tool()
 def get_cosmos() -> dict:  # type: ignore[type-arg]
-    """Get the full catalog: projects, document types, index stats.
+    """Get the full catalog: projects, document types, index health.
 
-    Call this at the start of a session to understand what's available.
-    Returns project list, document type stats, and index coverage.
+    Start every session with this call. Returns project list, document type stats,
+    enrichment coverage, and sync status. Check desync_documents — if > 0,
+    some files are missing locally or enrichment is from another machine.
     """
     config, index = _get_state()
 
@@ -71,6 +73,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     enriched = 0
     stale = 0
     empty = 0
+    desync = 0
     type_counts: dict[str, int] = {}
 
     for card in index.documents.values():
@@ -78,6 +81,14 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             project_stats[card.project]["doc_count"] += 1
             if not card.is_empty:
                 project_stats[card.project]["enriched_count"] += 1
+
+            # Desync: enriched_at > modified or file missing on disk
+            if card.enriched_at is not None and card.enriched_at > card.modified:
+                desync += 1
+            elif card.project in config.projects:
+                file_path = config.projects[card.project] / card.rel_path
+                if not file_path.exists():
+                    desync += 1
 
         if card.is_empty:
             empty += 1
@@ -110,12 +121,13 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     ]
 
     resp = CosmosResponse(
-        server_version="0.2.0",
+        server_version=__version__,
         indexed_at=index.indexed_at,
         total_documents=total,
         enriched_documents=enriched,
         stale_documents=stale,
         empty_documents=empty,
+        desync_documents=desync,
         projects=projects,
         document_types=document_types,
     )
@@ -132,8 +144,9 @@ def list_docs(
 
     Args:
         project: Filter by project ID.
-        type: Filter by document type.
-        stale: If true, only return stale or empty cards (need enrichment).
+        type: Filter by document type (e.g. "reference", "spec", "task").
+        stale: If true, return cards that need enrichment — both empty (never enriched)
+            and stale (enriched but file changed since).
     """
     _, index = _get_state()
 
@@ -184,10 +197,10 @@ def search_docs(
 
 
 @mcp.tool()
-def read_doc(doc_id: str) -> dict:  # type: ignore[type-arg]
-    """Get full card metadata for a specific document (no file content).
+def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
+    """Get index card for a document — type, summary, keywords, headings, timestamps.
 
-    Use this to inspect a document's details before reading its content.
+    No file content. Use this to inspect metadata before deciding to read the full file.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
@@ -214,12 +227,14 @@ def read_doc(doc_id: str) -> dict:  # type: ignore[type-arg]
 
 
 @mcp.tool()
-def get_doc(
+def read_doc(
     doc_id: str,
     section: str | None = None,
     range: str | None = None,
 ) -> dict:  # type: ignore[type-arg]
-    """Read file content. Full file, by section heading, or by line range.
+    """Read document content from disk. Returns full file, a section by heading, or a line range.
+
+    Use after search_docs() or list_docs() to read what you found.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
@@ -281,10 +296,11 @@ def update_index_tool(
 
     Call this after reading a document to fill in its metadata.
     Only updates fields that are provided — others remain unchanged.
+    For batch enrichment of multiple cards, use the /enrich-index skill instead.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
-        type: Document type (e.g. "reference", "spec", "task").
+        type: Document type from doc_types.yaml (e.g. "reference", "spec", "task").
         summary: Brief description (2-3 sentences).
         keywords: Search keywords.
         headings: Document headings.
@@ -319,14 +335,21 @@ def update_index_tool(
 
 
 @mcp.tool()
-def reindex_tool(project: str | None = None) -> dict:  # type: ignore[type-arg]
-    """Rescan filesystem and update index. Preserves enrichment data.
+def reindex_tool(project: str | None = None, force: bool = False) -> dict:  # type: ignore[type-arg]
+    """Rescan filesystem and update index.
 
-    If index feels stale (new files, deleted files), call this to refresh.
-    Enrichment (type, summary, keywords) is preserved — only file metadata updates.
+    Call when files were added, removed, or renamed. Enrichment is preserved by default.
+    Missing files become desync (kept in index, not removed) for cross-platform safety.
+    Cards from projects not in local config are always preserved (pass-through).
+
+    Use force=True to reset enrichment for configured projects, remove desync cards,
+    and rebuild from scratch. Pass-through cards are never affected by force.
+
+    Response fields: scanned, new, removed, stale, unchanged, passthrough, desync.
 
     Args:
         project: Rescan only this project (optional).
+        force: Reset enrichment and remove desync cards (default False).
     """
     global _index
     config, index = _get_state()
@@ -355,12 +378,12 @@ def reindex_tool(project: str | None = None) -> dict:  # type: ignore[type-arg]
                 doc_id: card for doc_id, card in index.documents.items() if card.project == project
             },
         )
-        new_project_index, stats = reindex(single_config, project_index)
+        new_project_index, stats = reindex(single_config, project_index, force=force)
         # Merge back
         merged_docs = {**other_cards, **new_project_index.documents}
         _index = IndexData(indexed_at=new_project_index.indexed_at, documents=merged_docs)
     else:
-        _index, stats = reindex(config, index)
+        _index, stats = reindex(config, index, force=force)
 
     save_index(_index, config.index_path)
 
@@ -372,6 +395,8 @@ def reindex_tool(project: str | None = None) -> dict:  # type: ignore[type-arg]
         "removed": stats.removed,
         "stale": stats.stale,
         "unchanged": stats.unchanged,
+        "passthrough": stats.passthrough,
+        "desync": stats.desync,
         "duration_ms": duration_ms,
     }
 

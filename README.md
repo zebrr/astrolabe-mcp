@@ -173,7 +173,7 @@ Agent → get_cosmos()
 Agent → list_docs(stale=true)
        ← [{doc_id: "web-app::docs/API.md", type: null, summary: null}, ...]
 
-Agent → get_doc("web-app::docs/API.md")
+Agent → read_doc("web-app::docs/API.md")
        ← {content: "# REST API Reference\n\n## Authentication\n...", total_lines: 340}
 
 Agent → update_index_tool(
@@ -214,14 +214,27 @@ Exact token matches get a 1.5x bonus. Results are sorted by relevance score.
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
 | `list_docs(project?, type?, stale?)` | List document cards with filters |
 | `search_docs(query, project?, type?)` | Search by query with relevance ranking |
-| `read_doc(doc_id)` | Full index card metadata (no file content) |
-| `get_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
+| `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
+| `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
 | `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card |
-| `reindex_tool(project?)` | Rescan filesystem, preserve enrichment |
+| `reindex_tool(project?, force?)` | Rescan filesystem, preserve enrichment. `force=True` resets enrichment |
 
 **doc_id format:** `project::rel_path` — e.g., `web-app::docs/API.md`.
 
-**Section reading:** `get_doc("web-app::docs/API.md", section="Authentication")` extracts from that heading to the next heading of the same or higher level. Returns available headings if the section isn't found.
+**Section reading:** `read_doc("web-app::docs/API.md", section="Authentication")` extracts from that heading to the next heading of the same or higher level. Returns available headings if the section isn't found.
+
+## Cross-Platform Sync
+
+Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) via a cloud folder (Google Drive, OneDrive).
+
+**Setup:** each machine has its own `runtime/config.json` (gitignored) with `index_path` pointing to the shared cloud location. Different machines may have different subsets of projects configured.
+
+**How it works:**
+
+- **Hash normalization** — line endings (CRLF/LF) are normalized before hashing, so the same file produces the same hash on any platform
+- **Pass-through** — cards from projects not in the local config are preserved during reindex (they belong to another machine's projects)
+- **Desync detection** — if a file is missing locally but exists in the index (not yet pulled), or if the index shows enrichment newer than the local file, `get_cosmos()` reports `desync_documents`. The agent warns you to `git pull` the relevant projects
+- **Force reindex** — `reindex_tool(force=True)` resets all enrichment for configured projects (useful after mass renames or broken state). Pass-through cards from other machines are always preserved
 
 ## Current Limitations
 

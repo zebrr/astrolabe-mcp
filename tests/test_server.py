@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import astrolabe.server as srv
+from astrolabe import __version__
 from astrolabe.models import AppConfig
 
 
@@ -59,7 +60,7 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
 class TestGetCosmos:
     def test_returns_stats(self, server_env: AppConfig) -> None:
         result = srv.get_cosmos()
-        assert result["server_version"] == "0.2.0"
+        assert result["server_version"] == __version__
         assert result["total_documents"] == 5
         assert result["empty_documents"] == 5  # nothing enriched
         assert len(result["projects"]) == 1
@@ -116,35 +117,35 @@ class TestSearchDocs:
         assert result[0]["doc_id"] == doc_id
 
 
-class TestReadDoc:
-    def test_read_existing(self, server_env: AppConfig) -> None:
-        result = srv.read_doc(doc_id="test-project::README.md")
+class TestGetCard:
+    def test_card_existing(self, server_env: AppConfig) -> None:
+        result = srv.get_card(doc_id="test-project::README.md")
         assert result["doc_id"] == "test-project::README.md"
         assert result["filename"] == "README.md"
 
-    def test_read_nonexistent(self, server_env: AppConfig) -> None:
-        result = srv.read_doc(doc_id="test-project::ghost.md")
+    def test_card_nonexistent(self, server_env: AppConfig) -> None:
+        result = srv.get_card(doc_id="test-project::ghost.md")
         assert "error" in result
 
 
-class TestGetDoc:
-    def test_get_full_content(self, server_env: AppConfig) -> None:
-        result = srv.get_doc(doc_id="test-project::README.md")
+class TestReadDoc:
+    def test_read_full_content(self, server_env: AppConfig) -> None:
+        result = srv.read_doc(doc_id="test-project::README.md")
         assert "content" in result
         assert "My Project" in result["content"]
 
-    def test_get_section(self, server_env: AppConfig) -> None:
-        result = srv.get_doc(doc_id="test-project::docs/guide.md", section="Setup")
+    def test_read_section(self, server_env: AppConfig) -> None:
+        result = srv.read_doc(doc_id="test-project::docs/guide.md", section="Setup")
         assert "content" in result
         assert "Steps here." in result["content"]
         assert result.get("section") == "Setup"
 
-    def test_get_range(self, server_env: AppConfig) -> None:
-        result = srv.get_doc(doc_id="test-project::README.md", range="1-1")
+    def test_read_range(self, server_env: AppConfig) -> None:
+        result = srv.read_doc(doc_id="test-project::README.md", range="1-1")
         assert result["returned_lines"] == 1
 
-    def test_get_nonexistent(self, server_env: AppConfig) -> None:
-        result = srv.get_doc(doc_id="test-project::ghost.md")
+    def test_read_nonexistent(self, server_env: AppConfig) -> None:
+        result = srv.read_doc(doc_id="test-project::ghost.md")
         assert "error" in result
 
 
@@ -176,7 +177,7 @@ class TestUpdateIndex:
         )
         assert result["updated_fields"] == ["keywords"]
         # Check type preserved
-        card_result = srv.read_doc(doc_id="test-project::README.md")
+        card_result = srv.get_card(doc_id="test-project::README.md")
         assert card_result["type"] == "project_doc"
 
 

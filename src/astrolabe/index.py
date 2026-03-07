@@ -27,11 +27,18 @@ class ReindexStats:
     removed: int = 0
     stale: int = 0
     unchanged: int = 0
+    passthrough: int = 0
+    desync: int = 0
 
 
 def _compute_hash(file_path: Path) -> str:
-    """Compute MD5 hex digest of file contents."""
-    return hashlib.md5(file_path.read_bytes()).hexdigest()
+    """Compute MD5 hex digest of file contents.
+
+    Normalizes CRLF to LF before hashing for cross-platform consistency.
+    """
+    raw = file_path.read_bytes()
+    raw = raw.replace(b"\r\n", b"\n")
+    return hashlib.md5(raw).hexdigest()
 
 
 def _matches_ignore_files(filename: str, patterns: list[str]) -> bool:
@@ -138,9 +145,17 @@ def build_index(config: AppConfig) -> IndexData:
 
 
 def reindex(
-    config: AppConfig, existing: IndexData | None = None
+    config: AppConfig,
+    existing: IndexData | None = None,
+    *,
+    force: bool = False,
 ) -> tuple[IndexData, ReindexStats]:
-    """Rescan filesystem and merge with existing index."""
+    """Rescan filesystem and merge with existing index.
+
+    Pass-through: cards from projects not in config are preserved as-is.
+    Desync: cards from configured projects where file is missing are preserved (not removed).
+    Force: when True, fresh cards have no enrichment; desync cards are removed.
+    """
     stats = ReindexStats()
 
     # Scan all projects
@@ -161,6 +176,10 @@ def reindex(
         if doc_id not in existing.documents:
             new_documents[doc_id] = fresh_card
             stats.new += 1
+        elif force:
+            # Force: use fresh card without enrichment
+            new_documents[doc_id] = fresh_card
+            stats.new += 1
         else:
             old_card = existing.documents[doc_id]
             if old_card.content_hash != fresh_card.content_hash:
@@ -177,10 +196,25 @@ def reindex(
                 new_documents[doc_id] = old_card
                 stats.unchanged += 1
 
-    # Removed files
-    for doc_id in existing.documents:
-        if doc_id not in fresh_cards:
+            # Informational desync: enrichment from another machine
+            if old_card.enriched_at is not None and old_card.enriched_at > fresh_card.modified:
+                stats.desync += 1
+
+    # Cards not in fresh scan
+    for doc_id, card in existing.documents.items():
+        if doc_id in fresh_cards:
+            continue
+        if card.project not in config.projects:
+            # Pass-through: foreign project, preserve as-is
+            new_documents[doc_id] = card
+            stats.passthrough += 1
+        elif force:
+            # Force: remove desync cards for configured projects
             stats.removed += 1
+        else:
+            # Desync: file missing but project is configured, preserve card
+            new_documents[doc_id] = card
+            stats.desync += 1
 
     return IndexData(indexed_at=datetime.now(UTC), documents=new_documents), stats
 

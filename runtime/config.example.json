@@ -4,6 +4,7 @@
     "another-project": "/path/to/another-project"
   },
   "index_path": ".doc-index.json",
+  "_index_path_note": "For cross-platform sync, use absolute path to cloud folder, e.g. G:/My Drive/astrolabe/.doc-index.json (Win) or /Volumes/GoogleDrive/My Drive/astrolabe/.doc-index.json (Mac)",
   "index_extensions": [
     ".md", ".yaml", ".yml", ".txt", ".py", ".sh",
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
