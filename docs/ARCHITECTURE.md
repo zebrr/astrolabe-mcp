@@ -72,3 +72,4 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings
 - Shared index: pass-through for foreign project cards, desync detection for missing files
 - Force reindex: `reindex(force=True)` resets enrichment, respects pass-through
+- doc_types.yaml lookup: `index_path.parent` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)

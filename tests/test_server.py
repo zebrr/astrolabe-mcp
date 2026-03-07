@@ -199,3 +199,84 @@ class TestReindex:
     def test_reindex_nonexistent_project(self, server_env: AppConfig) -> None:
         result = srv.reindex_tool(project="ghost")
         assert "error" in result
+
+
+class TestDocTypesLookup:
+    """Test doc_types.yaml lookup order: index_path.parent first, config_path.parent fallback."""
+
+    def _setup_split_dirs(
+        self,
+        tmp_path: Path,
+        fake_project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        yaml_in_cloud: bool = False,
+        yaml_in_config: bool = False,
+        cloud_content: str = "",
+        config_content: str = "",
+    ) -> None:
+        config_dir = tmp_path / "config"
+        cloud_dir = tmp_path / "cloud"
+        config_dir.mkdir()
+        cloud_dir.mkdir()
+
+        config_file = config_dir / "config.json"
+        config_data = {
+            "projects": {"test-project": str(fake_project)},
+            "index_path": str(cloud_dir / ".doc-index.json"),
+            "index_extensions": [".md", ".txt"],
+            "ignore_dirs": [".git"],
+            "ignore_files": [],
+            "max_file_size_kb": 100,
+        }
+        config_file.write_text(json.dumps(config_data))
+
+        if yaml_in_cloud:
+            (cloud_dir / "doc_types.yaml").write_text(cloud_content)
+        if yaml_in_config:
+            (config_dir / "doc_types.yaml").write_text(config_content)
+
+        monkeypatch.setenv("ASTROLABE_CONFIG", str(config_file))
+        srv._config = None
+        srv._index = None
+        srv._doc_types = {}
+        srv._init()
+
+    def test_loads_from_index_parent(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._setup_split_dirs(
+            tmp_path,
+            fake_project,
+            monkeypatch,
+            yaml_in_cloud=True,
+            cloud_content=("document_types:\n  cloud_type:\n    description: From cloud\n"),
+        )
+        assert "cloud_type" in srv._doc_types
+
+    def test_fallback_to_config_parent(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._setup_split_dirs(
+            tmp_path,
+            fake_project,
+            monkeypatch,
+            yaml_in_config=True,
+            config_content=("document_types:\n  local_type:\n    description: From config\n"),
+        )
+        assert "local_type" in srv._doc_types
+
+    def test_index_parent_takes_precedence(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._setup_split_dirs(
+            tmp_path,
+            fake_project,
+            monkeypatch,
+            yaml_in_cloud=True,
+            yaml_in_config=True,
+            cloud_content=("document_types:\n  cloud_type:\n    description: From cloud\n"),
+            config_content=("document_types:\n  local_type:\n    description: From config\n"),
+        )
+        assert "cloud_type" in srv._doc_types
+        assert "local_type" not in srv._doc_types

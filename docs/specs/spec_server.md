@@ -10,7 +10,7 @@ MCP server exposing 7 tools over stdio transport. Wraps core modules (index, rea
 
 1. Resolve config path from `ASTROLABE_CONFIG` env var (default: `config.json` in server's directory)
 2. `load_config(config_path)`
-3. `load_doc_types(config_path.parent / "doc_types.yaml")`
+3. Load `doc_types.yaml`: look in `index_path.parent` first, fallback to `config_path.parent`
 4. `load_index(config.index_path)` → if exists, `reindex(config, existing)` → `save_index()`
 5. If no existing index: `build_index(config)` → `save_index()`
 6. Start MCP server on stdio

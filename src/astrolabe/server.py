@@ -32,7 +32,14 @@ def _init() -> tuple[AppConfig, IndexData]:
     config_path = Path(config_path_str).resolve()
 
     _config = load_config(config_path)
-    _doc_types = load_doc_types(config_path.parent / "doc_types.yaml")
+    index_types_path = _config.index_path.parent / "doc_types.yaml"
+    config_types_path = config_path.parent / "doc_types.yaml"
+    if index_types_path.exists():
+        _doc_types = load_doc_types(index_types_path)
+    elif config_types_path.exists():
+        _doc_types = load_doc_types(config_types_path)
+    else:
+        _doc_types = {}
 
     existing = load_index(_config.index_path)
     if existing is not None:
