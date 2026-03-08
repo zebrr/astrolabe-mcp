@@ -54,7 +54,6 @@ Rescan filesystem and merge with existing index.
 - Unchanged files: kept as-is
 - **Pass-through**: cards from projects NOT in `config.projects` are preserved as-is (not removed)
 - **Desync**: cards from projects in config where file is missing on disk are preserved as desync (not removed)
-- **Desync (informational)**: if `enriched_at > fresh_card.modified`, card is counted as desync (enrichment from another machine)
 
 **Modes** (escalating):
 
@@ -72,6 +71,7 @@ Pass-through cards are always preserved regardless of mode.
 Update enrichment fields on a card. Only updates fields that are explicitly passed (not None).
 
 - Sets `enriched_at` to current UTC time
+- Sets `enriched_content_hash` to current `content_hash` (snapshot at enrichment time)
 - Raises `KeyError` if doc_id not in index
 - Returns the updated card
 
@@ -86,7 +86,7 @@ class ReindexStats:
     stale: int
     unchanged: int
     passthrough: int    # cards from projects not in config, preserved as-is
-    desync: int         # cards where file is missing or enriched_at > modified
+    desync: int         # cards where file is missing on disk (project in config)
     potential_moves: list[tuple[str, str]]  # (old_doc_id, new_doc_id) — filename matches
 ```
 

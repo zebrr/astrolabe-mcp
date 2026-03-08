@@ -194,16 +194,15 @@ def reindex(
                 fresh_card.summary = old_card.summary
                 fresh_card.keywords = old_card.keywords
                 fresh_card.enriched_at = old_card.enriched_at
+                fresh_card.enriched_content_hash = old_card.enriched_content_hash
                 new_documents[doc_id] = fresh_card
                 stats.stale += 1
             else:
-                # Unchanged
+                # Unchanged — migrate enriched cards missing enriched_content_hash
+                if old_card.enriched_at is not None and old_card.enriched_content_hash is None:
+                    old_card.enriched_content_hash = old_card.content_hash
                 new_documents[doc_id] = old_card
                 stats.unchanged += 1
-
-            # Informational desync: enrichment from another machine
-            if old_card.enriched_at is not None and old_card.enriched_at > fresh_card.modified:
-                stats.desync += 1
 
     # Cards not in fresh scan
     for doc_id, card in existing.documents.items():
@@ -267,4 +266,5 @@ def update_card(
     if headings is not None:
         card.headings = headings
     card.enriched_at = datetime.now(UTC)
+    card.enriched_content_hash = card.content_hash
     return card

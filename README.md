@@ -236,7 +236,8 @@ Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) 
 
 - **Hash normalization** — line endings (CRLF/LF) are normalized before hashing, so the same file produces the same hash on any platform
 - **Pass-through** — cards from projects not in the local config are preserved during reindex (they belong to another machine's projects)
-- **Desync detection** — if a file is missing locally but exists in the index (not yet pulled), or if the index shows enrichment newer than the local file, `get_cosmos()` reports `desync_documents`. The agent warns you to `git pull` the relevant projects
+- **Desync detection** — if a file is missing locally but exists in the index, `get_cosmos()` reports `desync_documents`. Run `reindex()` to update, or `git pull` if files are from another machine
+- **Stale detection** — hash-based: if `content_hash` differs from `enriched_content_hash`, the card is stale and needs re-enrichment. Reliable across machines (no timestamp dependency)
 - **Shared doc_types** — `doc_types.yaml` is loaded from next to the index file first, then next to the config file. When using a cloud index, place `doc_types.yaml` in the same cloud folder to share document type definitions across machines
 - **Reindex modes** — `reindex_tool(mode="clean")` removes cards for deleted/moved files while preserving enrichment. `reindex_tool(mode="rebuild")` resets all enrichment (nuclear option). Pass-through cards from other machines are always preserved
 

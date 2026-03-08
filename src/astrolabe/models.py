@@ -37,6 +37,7 @@ class DocCard(BaseModel):
     summary: str | None = None
     keywords: list[str] | None = None
     enriched_at: datetime | None = None
+    enriched_content_hash: str | None = None
 
     @property
     def doc_id(self) -> str:
@@ -45,8 +46,11 @@ class DocCard(BaseModel):
 
     @property
     def is_stale(self) -> bool:
-        """True if file was modified after last enrichment."""
-        return self.enriched_at is not None and self.modified > self.enriched_at
+        """True if file content changed since last enrichment."""
+        return (
+            self.enriched_content_hash is not None
+            and self.content_hash != self.enriched_content_hash
+        )
 
     @property
     def is_empty(self) -> bool:

@@ -81,5 +81,6 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Search: token-level matching with field weights (keywords 3.0, filename 2.5, headings 2.0, summary 1.0)
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings
 - Shared index: pass-through for foreign project cards, desync detection for missing files
+- Stale detection: hash-based (`enriched_content_hash` vs `content_hash`), not timestamp-based
 - Reindex modes: `update` (preserve all) → `clean` (remove desync) → `rebuild` (reset enrichment)
 - doc_types.yaml lookup: `index_dir` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)

@@ -23,7 +23,7 @@ MCP server exposing 7 tools over stdio transport. Wraps core modules (index, rea
 Entry point. Returns projects, document types, index stats.
 - Builds CosmosResponse from current index + doc_types
 - `document_types` from real index (only assigned types), descriptions from doc_types.yaml
-- `desync_documents`: count of cards where file missing on disk (project in config) or `enriched_at > modified`
+- `desync_documents`: count of cards where file missing on disk (project in config)
 
 ### `list_docs(project?, type?, stale?) -> list[DocCard summary]`
 
@@ -38,6 +38,7 @@ Search by query with field weights. Delegates to `search.search()`.
 ### `get_card(doc_id) -> DocCard full`
 
 Index card metadata for a specific document. No file content.
+- Includes `stale: bool` flag (true if file content changed since enrichment)
 - Raises error if doc_id not found
 
 ### `read_doc(doc_id, section?, range?) -> file content`

@@ -47,11 +47,12 @@ class DocCard(BaseModel):
     summary: str | None = None
     keywords: list[str] | None = None
     enriched_at: datetime | None = None
+    enriched_content_hash: str | None = None  # content_hash snapshot at enrichment time
 ```
 
 Computed properties:
 - `doc_id: str` — `"{project}::{rel_path}"`
-- `is_stale: bool` — `enriched_at is not None and modified > enriched_at`
+- `is_stale: bool` — `enriched_content_hash is not None and content_hash != enriched_content_hash` (file content changed since enrichment)
 - `is_empty: bool` — `enriched_at is None`
 
 ### IndexData
@@ -103,7 +104,7 @@ class CosmosResponse(BaseModel):
     enriched_documents: int
     stale_documents: int
     empty_documents: int
-    desync_documents: int = 0    # files missing on disk or enriched_at > modified
+    desync_documents: int = 0    # files missing on disk (project in config)
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 ```

@@ -275,6 +275,7 @@ class TestUpdateCard:
         assert updated.type == "spec"
         assert updated.summary == "A spec"
         assert updated.enriched_at is not None
+        assert updated.enriched_content_hash == "abc"
 
     def test_partial_update(self) -> None:
         card = DocCard(
@@ -368,8 +369,8 @@ class TestPassthrough:
 
 
 class TestDesync:
-    def test_enriched_at_greater_than_modified_is_desync(self, tmp_path: Path) -> None:
-        """Card enriched on another machine (enriched_at > modified) = desync."""
+    def test_enriched_at_greater_than_modified_is_not_desync(self, tmp_path: Path) -> None:
+        """enriched_at > modified is normal state, not desync."""
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "doc.md").write_text("content")
@@ -384,14 +385,48 @@ class TestDesync:
         )
         index, _ = reindex(config)
 
-        # Simulate enrichment from another machine (far future)
+        # Simulate enrichment (enriched_at > modified is normal)
         card = index.documents["proj::doc.md"]
         card.enriched_at = datetime(2099, 1, 1, tzinfo=UTC)
+        card.enriched_content_hash = card.content_hash
 
         index2, stats = reindex(config, existing=index)
-        assert stats.desync == 1
-        assert stats.unchanged == 1  # card is still unchanged
+        assert stats.desync == 0  # not desync — file exists, hash matches
+        assert stats.unchanged == 1
         assert "proj::doc.md" in index2.documents
+
+
+class TestMigration:
+    def test_enriched_card_without_enriched_content_hash_gets_migrated(
+        self, tmp_path: Path
+    ) -> None:
+        """Old enriched cards (no enriched_content_hash) get it auto-set on reindex."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Simulate old-format enrichment (no enriched_content_hash)
+        card = index.documents["proj::doc.md"]
+        card.enriched_at = datetime(2026, 3, 5, tzinfo=UTC)
+        card.type = "spec"
+        card.summary = "A spec"
+        assert card.enriched_content_hash is None
+
+        index2, stats = reindex(config, existing=index)
+        migrated = index2.documents["proj::doc.md"]
+        assert migrated.enriched_content_hash == migrated.content_hash
+        assert migrated.is_stale is False
+        assert migrated.type == "spec"  # enrichment preserved
 
 
 class TestReindexModes:

@@ -123,6 +123,22 @@ class TestGetCard:
         assert result["doc_id"] == "test-project::README.md"
         assert result["filename"] == "README.md"
 
+    def test_card_has_stale_flag(self, server_env: AppConfig) -> None:
+        result = srv.get_card(doc_id="test-project::README.md")
+        assert "stale" in result
+        assert result["stale"] is False  # not enriched = not stale (is_empty)
+
+    def test_card_stale_after_content_change(self, server_env: AppConfig) -> None:
+        # Enrich a card
+        srv.update_index_tool(doc_id="test-project::README.md", type="doc", summary="Test")
+        # Simulate content change by modifying enriched_content_hash
+        assert srv._index is not None
+        card = srv._index.documents["test-project::README.md"]
+        card.content_hash = "changed_hash"
+
+        result = srv.get_card(doc_id="test-project::README.md")
+        assert result["stale"] is True
+
     def test_card_nonexistent(self, server_env: AppConfig) -> None:
         result = srv.get_card(doc_id="test-project::ghost.md")
         assert "error" in result

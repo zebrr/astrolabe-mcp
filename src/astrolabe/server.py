@@ -73,9 +73,9 @@ def _get_state() -> tuple[AppConfig, IndexData]:
 def get_cosmos() -> dict:  # type: ignore[type-arg]
     """Get the full catalog: projects, document types, index health.
 
-    Start every session with this call. Returns project list, document type stats,
-    enrichment coverage, and sync status. Check desync_documents — if > 0,
-    some files are missing locally or enrichment is from another machine.
+    Returns project list, document type stats, enrichment coverage, and sync status.
+    Check desync_documents — if > 0, some files are missing on disk (run reindex).
+    Check stale_documents — if > 0, file content changed since enrichment (re-enrich).
     """
     config, index = _get_state()
 
@@ -236,6 +236,7 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
         "summary": card.summary,
         "keywords": card.keywords,
         "enriched_at": card.enriched_at.isoformat() if card.enriched_at else None,
+        "stale": card.is_stale,
     }
 
 
@@ -354,13 +355,12 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
 
     Call when files were added, removed, or renamed.
     Cards from projects not in local config are always preserved (pass-through).
+    Desync = files in index but missing on disk.
 
     Three modes (escalating):
     - "update" (default): preserve desync cards, preserve enrichment, detect file moves
     - "clean": remove desync cards (deleted/moved files), preserve enrichment
     - "rebuild": remove desync cards AND reset all enrichment (nuclear option)
-
-    Response fields: scanned, new, removed, stale, unchanged, passthrough, desync.
 
     Args:
         project: Rescan only this project (optional).

@@ -71,21 +71,28 @@ class TestDocCard:
         assert card.is_empty is True
         assert card.is_stale is False
 
-    def test_is_stale_when_modified_after_enrichment(self) -> None:
+    def test_is_stale_when_hash_changed(self) -> None:
         card = self._make_card(
-            modified=datetime(2026, 3, 6, 12, 0, tzinfo=UTC),
+            content_hash="new_hash",
             enriched_at=datetime(2026, 3, 5, 12, 0, tzinfo=UTC),
+            enriched_content_hash="old_hash",
         )
         assert card.is_stale is True
         assert card.is_empty is False
 
-    def test_not_stale_when_enriched_after_modification(self) -> None:
+    def test_not_stale_when_hash_matches(self) -> None:
         card = self._make_card(
-            modified=datetime(2026, 3, 5, 12, 0, tzinfo=UTC),
+            content_hash="same_hash",
             enriched_at=datetime(2026, 3, 6, 12, 0, tzinfo=UTC),
+            enriched_content_hash="same_hash",
         )
         assert card.is_stale is False
         assert card.is_empty is False
+
+    def test_not_stale_when_never_enriched(self) -> None:
+        card = self._make_card()
+        assert card.is_stale is False
+        assert card.is_empty is True
 
     def test_enrichment_fields_default_none(self) -> None:
         card = self._make_card()
@@ -94,6 +101,7 @@ class TestDocCard:
         assert card.summary is None
         assert card.keywords is None
         assert card.enriched_at is None
+        assert card.enriched_content_hash is None
 
     def test_enrichment_fields_set(self) -> None:
         card = self._make_card(
