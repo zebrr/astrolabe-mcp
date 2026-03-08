@@ -19,7 +19,7 @@ class TestAppConfig:
     def test_basic_creation(self) -> None:
         config = AppConfig(
             projects={"neyra": Path("/projects/neyra")},
-            index_path=Path(".doc-index.json"),
+            index_dir=Path("."),
             index_extensions=[".md"],
             ignore_dirs=[".git"],
             ignore_files=["*.pyc"],
@@ -35,7 +35,7 @@ class TestAppConfig:
                 "b": Path("/b"),
                 "c": Path("/c"),
             },
-            index_path=Path(".doc-index.json"),
+            index_dir=Path("."),
             index_extensions=[".md", ".yaml"],
             ignore_dirs=[],
             ignore_files=[],

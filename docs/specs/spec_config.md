@@ -13,7 +13,7 @@ Loads `config.json` and `doc_types.yaml`, returning validated `AppConfig` and do
 Load and validate `config.json`.
 
 - `config_path`: absolute path to config.json
-- `index_path` is resolved relative to the config file's parent directory
+- `index_dir` is resolved relative to the config file's parent directory
 - Non-existent project paths are kept (skipped at scan time, not load time)
 - Raises `FileNotFoundError` if config file missing
 - Raises `pydantic.ValidationError` if config structure invalid

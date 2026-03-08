@@ -15,7 +15,8 @@ Application configuration loaded from `config.json`.
 ```python
 class AppConfig(BaseModel):
     projects: dict[str, Path]          # name → absolute path
-    index_path: Path                   # path to .doc-index.json (relative to config dir)
+    index_dir: Path                    # directory for index files (relative to config dir)
+    storage: Literal["json", "sqlite"] = "json"  # storage backend
     index_extensions: list[str]        # e.g. [".md", ".yaml"]
     ignore_dirs: list[str]             # directory names to skip
     ignore_files: list[str]            # glob patterns for files to skip
@@ -24,7 +25,8 @@ class AppConfig(BaseModel):
 
 - `projects`: keys are project IDs used in doc_id, values are absolute paths
 - Non-existent project paths are kept in config but skipped at scan time (not at load time)
-- `index_path`: resolved relative to config file directory
+- `index_dir`: resolved relative to config file directory. Server places `.doc-index.json` or `.doc-index.db` inside.
+- `storage`: `"json"` (default) uses `.doc-index.json`, `"sqlite"` uses `.doc-index.db`
 
 ### DocCard
 

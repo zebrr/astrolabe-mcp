@@ -4,15 +4,17 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 
 from astrolabe import __version__
 from astrolabe.config import load_config, load_doc_types
-from astrolabe.index import build_index, load_index, reindex, save_index, update_card
+from astrolabe.index import build_index, reindex, update_card
 from astrolabe.models import AppConfig, CosmosResponse, IndexData, ProjectSummary, TypeSummary
 from astrolabe.reader import read_file
 from astrolabe.search import search
+from astrolabe.storage import StorageBackend, create_storage
 
 logger = logging.getLogger(__name__)
 
@@ -21,27 +23,33 @@ mcp = FastMCP("astrolabe")
 # Global state
 _config: AppConfig | None = None
 _index: IndexData | None = None
+_storage: StorageBackend | None = None
 _doc_types: dict[str, str] = {}
+
+
+def _load_doc_types(config: AppConfig, config_path: Path) -> dict[str, str]:
+    """Load doc_types.yaml from index dir or config dir."""
+    index_types_path = config.index_dir / "doc_types.yaml"
+    config_types_path = config_path.parent / "doc_types.yaml"
+    if index_types_path.exists():
+        return load_doc_types(index_types_path)
+    if config_types_path.exists():
+        return load_doc_types(config_types_path)
+    return {}
 
 
 def _init() -> tuple[AppConfig, IndexData]:
     """Initialize config and index. Called on startup."""
-    global _config, _index, _doc_types
+    global _config, _index, _storage, _doc_types
 
     config_path_str = os.environ.get("ASTROLABE_CONFIG", "runtime/config.json")
     config_path = Path(config_path_str).resolve()
 
     _config = load_config(config_path)
-    index_types_path = _config.index_path.parent / "doc_types.yaml"
-    config_types_path = config_path.parent / "doc_types.yaml"
-    if index_types_path.exists():
-        _doc_types = load_doc_types(index_types_path)
-    elif config_types_path.exists():
-        _doc_types = load_doc_types(config_types_path)
-    else:
-        _doc_types = {}
+    _doc_types = _load_doc_types(_config, config_path)
 
-    existing = load_index(_config.index_path)
+    _storage = create_storage(_config)
+    existing = _storage.load()
     if existing is not None:
         _index, stats = reindex(_config, existing)
         logger.info("Reindex on startup: %s", stats)
@@ -49,7 +57,7 @@ def _init() -> tuple[AppConfig, IndexData]:
         _index = build_index(_config)
         logger.info("Built fresh index: %d documents", len(_index.documents))
 
-    save_index(_index, _config.index_path)
+    _storage.save(_index)
     return _config, _index
 
 
@@ -89,10 +97,8 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             if not card.is_empty:
                 project_stats[card.project]["enriched_count"] += 1
 
-            # Desync: enriched_at > modified or file missing on disk
-            if card.enriched_at is not None and card.enriched_at > card.modified:
-                desync += 1
-            elif card.project in config.projects:
+            # Desync: file missing on disk (deleted or not synced from another machine)
+            if card.project in config.projects:
                 file_path = config.projects[card.project] / card.rel_path
                 if not file_path.exists():
                     desync += 1
@@ -303,7 +309,7 @@ def update_index_tool(
 
     Call this after reading a document to fill in its metadata.
     Only updates fields that are provided — others remain unchanged.
-    For batch enrichment of multiple cards, use the /enrich-index skill instead.
+    For batch enrichment of multiple cards, use the enrich-index skill instead.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
@@ -312,7 +318,7 @@ def update_index_tool(
         keywords: Search keywords.
         headings: Document headings.
     """
-    config, index = _get_state()
+    _, index = _get_state()
 
     try:
         card = update_card(
@@ -321,7 +327,8 @@ def update_index_tool(
     except KeyError:
         return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
 
-    save_index(index, config.index_path)
+    if _storage is not None:
+        _storage.save_card(card, index.indexed_at)
 
     updated_fields = []
     if type is not None:
@@ -342,24 +349,40 @@ def update_index_tool(
 
 
 @mcp.tool()
-def reindex_tool(project: str | None = None, force: bool = False) -> dict:  # type: ignore[type-arg]
+def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # type: ignore[type-arg]
     """Rescan filesystem and update index.
 
-    Call when files were added, removed, or renamed. Enrichment is preserved by default.
-    Missing files become desync (kept in index, not removed) for cross-platform safety.
+    Call when files were added, removed, or renamed.
     Cards from projects not in local config are always preserved (pass-through).
 
-    Use force=True to reset enrichment for configured projects, remove desync cards,
-    and rebuild from scratch. Pass-through cards are never affected by force.
+    Three modes (escalating):
+    - "update" (default): preserve desync cards, preserve enrichment, detect file moves
+    - "clean": remove desync cards (deleted/moved files), preserve enrichment
+    - "rebuild": remove desync cards AND reset all enrichment (nuclear option)
 
     Response fields: scanned, new, removed, stale, unchanged, passthrough, desync.
 
     Args:
         project: Rescan only this project (optional).
-        force: Reset enrichment and remove desync cards (default False).
+        mode: Reindex mode — "update", "clean", or "rebuild" (default "update").
     """
-    global _index
-    config, index = _get_state()
+    global _config, _index, _storage, _doc_types
+    if mode not in ("update", "clean", "rebuild"):
+        return {"error": f"Invalid mode: {mode}. Use 'update', 'clean', or 'rebuild'."}
+    reindex_mode = cast(Literal["update", "clean", "rebuild"], mode)
+
+    # Reload config from disk to pick up any changes
+    config_path_str = os.environ.get("ASTROLABE_CONFIG", "runtime/config.json")
+    config_path = Path(config_path_str).resolve()
+    _config = load_config(config_path)
+    _doc_types = _load_doc_types(_config, config_path)
+
+    # Recreate storage in case config.storage changed
+    _storage = create_storage(_config)
+    config = _config
+    if _index is None:
+        _index = _storage.load() or build_index(config)
+    index = _index
 
     start = datetime.now(UTC)
 
@@ -369,7 +392,8 @@ def reindex_tool(project: str | None = None, force: bool = False) -> dict:  # ty
             return {"error": f"Project not found: {project}"}
         single_config = AppConfig(
             projects={project: config.projects[project]},
-            index_path=config.index_path,
+            index_dir=config.index_dir,
+            storage=config.storage,
             index_extensions=config.index_extensions,
             ignore_dirs=config.ignore_dirs,
             ignore_files=config.ignore_files,
@@ -385,18 +409,18 @@ def reindex_tool(project: str | None = None, force: bool = False) -> dict:  # ty
                 doc_id: card for doc_id, card in index.documents.items() if card.project == project
             },
         )
-        new_project_index, stats = reindex(single_config, project_index, force=force)
+        new_project_index, stats = reindex(single_config, project_index, mode=reindex_mode)
         # Merge back
         merged_docs = {**other_cards, **new_project_index.documents}
         _index = IndexData(indexed_at=new_project_index.indexed_at, documents=merged_docs)
     else:
-        _index, stats = reindex(config, index, force=force)
+        _index, stats = reindex(config, index, mode=reindex_mode)
 
-    save_index(_index, config.index_path)
+    _storage.save(_index)
 
     duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 
-    return {
+    result: dict[str, object] = {
         "scanned": stats.scanned,
         "new": stats.new,
         "removed": stats.removed,
@@ -406,6 +430,11 @@ def reindex_tool(project: str | None = None, force: bool = False) -> dict:  # ty
         "desync": stats.desync,
         "duration_ms": duration_ms,
     }
+    if stats.potential_moves:
+        result["potential_moves"] = [
+            {"from": old_id, "to": new_id} for old_id, new_id in stats.potential_moves
+        ]
+    return result
 
 
 def main() -> None:

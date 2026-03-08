@@ -6,10 +6,11 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Literal
 
 from filelock import FileLock
 
@@ -29,6 +30,7 @@ class ReindexStats:
     unchanged: int = 0
     passthrough: int = 0
     desync: int = 0
+    potential_moves: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _compute_hash(file_path: Path) -> str:
@@ -148,13 +150,16 @@ def reindex(
     config: AppConfig,
     existing: IndexData | None = None,
     *,
-    force: bool = False,
+    mode: Literal["update", "clean", "rebuild"] = "update",
 ) -> tuple[IndexData, ReindexStats]:
     """Rescan filesystem and merge with existing index.
 
-    Pass-through: cards from projects not in config are preserved as-is.
-    Desync: cards from configured projects where file is missing are preserved (not removed).
-    Force: when True, fresh cards have no enrichment; desync cards are removed.
+    Modes (escalating):
+    - update: preserve desync cards, preserve enrichment, detect moves
+    - clean: remove desync cards, preserve enrichment, skip move detection
+    - rebuild: remove desync cards, reset enrichment, skip move detection
+
+    Pass-through cards (foreign projects) are always preserved.
     """
     stats = ReindexStats()
 
@@ -176,8 +181,8 @@ def reindex(
         if doc_id not in existing.documents:
             new_documents[doc_id] = fresh_card
             stats.new += 1
-        elif force:
-            # Force: use fresh card without enrichment
+        elif mode == "rebuild":
+            # Rebuild: use fresh card without enrichment
             new_documents[doc_id] = fresh_card
             stats.new += 1
         else:
@@ -208,13 +213,29 @@ def reindex(
             # Pass-through: foreign project, preserve as-is
             new_documents[doc_id] = card
             stats.passthrough += 1
-        elif force:
-            # Force: remove desync cards for configured projects
+        elif mode in ("clean", "rebuild"):
+            # Clean/rebuild: remove desync cards for configured projects
             stats.removed += 1
         else:
             # Desync: file missing but project is configured, preserve card
             new_documents[doc_id] = card
             stats.desync += 1
+
+    # Detect potential moves: desync cards matching new cards by filename
+    if mode == "update":
+        desync_by_name: dict[str, str] = {}
+        for doc_id, card in existing.documents.items():
+            if (
+                doc_id not in fresh_cards
+                and card.project in config.projects
+                and card.enriched_at is not None
+            ):
+                desync_by_name[card.filename] = doc_id
+        for doc_id, card in new_documents.items():
+            if card.is_empty and card.filename in desync_by_name:
+                old_doc_id = desync_by_name[card.filename]
+                if old_doc_id != doc_id:
+                    stats.potential_moves.append((old_doc_id, doc_id))
 
     return IndexData(indexed_at=datetime.now(UTC), documents=new_documents), stats
 

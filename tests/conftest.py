@@ -46,7 +46,7 @@ def sample_config(tmp_path: Path, fake_project: Path) -> AppConfig:
     """AppConfig pointing to the fake project."""
     return AppConfig(
         projects={"my-project": fake_project},
-        index_path=tmp_path / ".doc-index.json",
+        index_dir=tmp_path,
         index_extensions=[".md", ".yaml", ".yml", ".txt"],
         ignore_dirs=[".git", ".venv", "src", "node_modules", "__pycache__"],
         ignore_files=["*.pyc", "*.lock"],

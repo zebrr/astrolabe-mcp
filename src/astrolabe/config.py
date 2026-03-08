@@ -24,9 +24,9 @@ def load_config(config_path: Path) -> AppConfig:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     config = AppConfig.model_validate(raw)
 
-    # Resolve index_path relative to config file directory
-    if not config.index_path.is_absolute():
-        config.index_path = config_path.parent / config.index_path
+    # Resolve index_dir relative to config file directory
+    if not config.index_dir.is_absolute():
+        config.index_dir = config_path.parent / config.index_dir
 
     return config
 

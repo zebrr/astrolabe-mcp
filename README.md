@@ -61,7 +61,8 @@ Done. The server starts automatically when the client launches.
     "api-docs": "/path/to/api-docs",
     "web-app": "/path/to/web-app"
   },
-  "index_path": ".doc-index.json",
+  "index_dir": ".",
+  "storage": "json",
   "index_extensions": [
     ".md", ".yaml", ".yml", ".txt", ".py", ".sh",
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -79,6 +80,8 @@ Done. The server starts automatically when the client launches.
   "max_file_size_kb": 100
 }
 ```
+
+**Storage backend:** `"json"` (default) or `"sqlite"`. JSON works out of the box. Switch to SQLite for large indexes (500+ cards) — enrichment writes ~1KB per card instead of rewriting the entire file. Changing the setting auto-migrates the existing JSON index, no re-enrichment needed.
 
 **What gets indexed:** files matching `index_extensions` in project directories, excluding `ignore_dirs` and `ignore_files`.
 
@@ -217,7 +220,7 @@ Exact token matches get a 1.5x bonus. Results are sorted by relevance score.
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
 | `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card |
-| `reindex_tool(project?, force?)` | Rescan filesystem, preserve enrichment. `force=True` resets enrichment |
+| `reindex_tool(project?, mode?)` | Rescan filesystem. `mode`: `update` (default) / `clean` (remove missing) / `rebuild` (reset all) |
 
 **doc_id format:** `project::rel_path` — e.g., `web-app::docs/API.md`.
 
@@ -227,7 +230,7 @@ Exact token matches get a 1.5x bonus. Results are sorted by relevance score.
 
 Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) via a cloud folder (Google Drive, OneDrive).
 
-**Setup:** each machine has its own `runtime/config.json` (gitignored) with `index_path` pointing to the shared cloud location. Different machines may have different subsets of projects configured.
+**Setup:** each machine has its own `runtime/config.json` (gitignored) with `index_dir` pointing to the shared cloud folder. Different machines may have different subsets of projects configured.
 
 **How it works:**
 
@@ -235,7 +238,7 @@ Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) 
 - **Pass-through** — cards from projects not in the local config are preserved during reindex (they belong to another machine's projects)
 - **Desync detection** — if a file is missing locally but exists in the index (not yet pulled), or if the index shows enrichment newer than the local file, `get_cosmos()` reports `desync_documents`. The agent warns you to `git pull` the relevant projects
 - **Shared doc_types** — `doc_types.yaml` is loaded from next to the index file first, then next to the config file. When using a cloud index, place `doc_types.yaml` in the same cloud folder to share document type definitions across machines
-- **Force reindex** — `reindex_tool(force=True)` resets all enrichment for configured projects (useful after mass renames or broken state). Pass-through cards from other machines are always preserved
+- **Reindex modes** — `reindex_tool(mode="clean")` removes cards for deleted/moved files while preserving enrichment. `reindex_tool(mode="rebuild")` resets all enrichment (nuclear option). Pass-through cards from other machines are always preserved
 
 ## Current Limitations
 
@@ -244,7 +247,7 @@ Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) 
 - **No code parsing** — `.py`/`.sh` files are read as plain text, no AST analysis
 - **No semantic search** — token matching only, no embeddings (planned)
 - **No file writing** — read-only; creating/editing documents via MCP is not supported yet
-- **Single index file** — concurrent writes use filelock, but not designed for high-throughput multi-client scenarios
+- **Single index file** — JSON uses filelock, SQLite uses its own locking; not designed for high-throughput multi-client scenarios
 
 ## Contributing
 

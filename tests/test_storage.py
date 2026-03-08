@@ -1,0 +1,329 @@
+"""Tests for storage backends (JsonStorage and SqliteStorage)."""
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+
+from astrolabe.models import AppConfig, DocCard, IndexData
+from astrolabe.storage import StorageBackend, create_storage
+from astrolabe.storage_json import JsonStorage
+from astrolabe.storage_sqlite import SqliteStorage
+
+
+def _make_card(
+    project: str = "proj",
+    rel_path: str = "docs/readme.md",
+    *,
+    enriched: bool = False,
+) -> DocCard:
+    """Create a test DocCard."""
+    card = DocCard(
+        project=project,
+        filename=Path(rel_path).name,
+        rel_path=rel_path,
+        size=100,
+        modified=datetime(2026, 1, 1, tzinfo=UTC),
+        content_hash="abc123",
+    )
+    if enriched:
+        card.type = "reference"
+        card.summary = "A readme file."
+        card.keywords = ["readme", "docs"]
+        card.headings = ["Introduction", "Usage"]
+        card.enriched_at = datetime(2026, 1, 2, tzinfo=UTC)
+    return card
+
+
+def _make_index(cards: list[DocCard] | None = None) -> IndexData:
+    """Create a test IndexData."""
+    if cards is None:
+        cards = [_make_card()]
+    return IndexData(
+        indexed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        documents={c.doc_id: c for c in cards},
+    )
+
+
+@pytest.fixture(params=["json", "sqlite"])
+def storage(request: pytest.FixtureRequest, tmp_path: Path) -> StorageBackend:
+    """Parametrized fixture: returns both JsonStorage and SqliteStorage."""
+    if request.param == "json":
+        return JsonStorage(tmp_path / ".doc-index.json")
+    return SqliteStorage(tmp_path / ".doc-index.db")
+
+
+class TestProtocolCompliance:
+    """Both backends satisfy the StorageBackend protocol."""
+
+    def test_json_is_storage_backend(self, tmp_path: Path) -> None:
+        s = JsonStorage(tmp_path / "index.json")
+        assert isinstance(s, StorageBackend)
+
+    def test_sqlite_is_storage_backend(self, tmp_path: Path) -> None:
+        s = SqliteStorage(tmp_path / "index.db")
+        assert isinstance(s, StorageBackend)
+
+
+class TestLoadSaveRoundtrip:
+    """load/save roundtrip preserves all data."""
+
+    def test_empty_load_returns_none(self, storage: StorageBackend) -> None:
+        # SQLite creates the file on __init__, but has no meta rows
+        result = storage.load()
+        assert result is None
+
+    def test_save_and_load(self, storage: StorageBackend) -> None:
+        index = _make_index()
+        storage.save(index)
+        loaded = storage.load()
+
+        assert loaded is not None
+        assert len(loaded.documents) == 1
+        card = list(loaded.documents.values())[0]
+        assert card.project == "proj"
+        assert card.rel_path == "docs/readme.md"
+        assert card.content_hash == "abc123"
+
+    def test_enriched_card_roundtrip(self, storage: StorageBackend) -> None:
+        card = _make_card(enriched=True)
+        index = _make_index([card])
+        storage.save(index)
+        loaded = storage.load()
+
+        assert loaded is not None
+        loaded_card = loaded.documents[card.doc_id]
+        assert loaded_card.type == "reference"
+        assert loaded_card.summary == "A readme file."
+        assert loaded_card.keywords == ["readme", "docs"]
+        assert loaded_card.headings == ["Introduction", "Usage"]
+        assert loaded_card.enriched_at == datetime(2026, 1, 2, tzinfo=UTC)
+
+    def test_multiple_cards(self, storage: StorageBackend) -> None:
+        cards = [
+            _make_card("proj1", "a.md"),
+            _make_card("proj2", "b.md", enriched=True),
+            _make_card("proj1", "sub/c.md"),
+        ]
+        index = _make_index(cards)
+        storage.save(index)
+        loaded = storage.load()
+
+        assert loaded is not None
+        assert len(loaded.documents) == 3
+        assert "proj1::a.md" in loaded.documents
+        assert "proj2::b.md" in loaded.documents
+        assert "proj1::sub/c.md" in loaded.documents
+
+    def test_save_overwrites(self, storage: StorageBackend) -> None:
+        """Second save replaces all data."""
+        index1 = _make_index([_make_card("proj", "a.md")])
+        storage.save(index1)
+
+        index2 = _make_index([_make_card("proj", "b.md")])
+        storage.save(index2)
+
+        loaded = storage.load()
+        assert loaded is not None
+        assert len(loaded.documents) == 1
+        assert "proj::b.md" in loaded.documents
+
+    def test_indexed_at_preserved(self, storage: StorageBackend) -> None:
+        ts = datetime(2026, 6, 15, 12, 30, tzinfo=UTC)
+        index = IndexData(indexed_at=ts, documents={})
+        storage.save(index)
+        loaded = storage.load()
+        assert loaded is not None
+        assert loaded.indexed_at == ts
+
+
+class TestSaveCard:
+    """save_card persists a single card."""
+
+    def test_save_card_to_existing_index(self, storage: StorageBackend) -> None:
+        index = _make_index([_make_card("proj", "a.md")])
+        storage.save(index)
+
+        new_card = _make_card("proj", "b.md", enriched=True)
+        storage.save_card(new_card, index.indexed_at)
+
+        loaded = storage.load()
+        assert loaded is not None
+        assert len(loaded.documents) == 2
+        assert "proj::b.md" in loaded.documents
+        assert loaded.documents["proj::b.md"].type == "reference"
+
+    def test_save_card_updates_existing(self, storage: StorageBackend) -> None:
+        card = _make_card("proj", "a.md")
+        index = _make_index([card])
+        storage.save(index)
+
+        # Enrich the same card
+        card.type = "spec"
+        card.summary = "Updated summary"
+        card.enriched_at = datetime(2026, 3, 1, tzinfo=UTC)
+        storage.save_card(card, index.indexed_at)
+
+        loaded = storage.load()
+        assert loaded is not None
+        assert len(loaded.documents) == 1
+        loaded_card = loaded.documents["proj::a.md"]
+        assert loaded_card.type == "spec"
+        assert loaded_card.summary == "Updated summary"
+
+    def test_save_card_to_empty_storage(self, storage: StorageBackend) -> None:
+        """save_card works even if storage has no prior data."""
+        card = _make_card("proj", "new.md")
+        ts = datetime(2026, 1, 1, tzinfo=UTC)
+
+        # For SQLite, this inserts into empty DB
+        # For JSON, this creates a new file
+        storage.save_card(card, ts)
+
+        loaded = storage.load()
+        assert loaded is not None
+        assert "proj::new.md" in loaded.documents
+
+
+class TestExists:
+    """exists() checks storage file presence."""
+
+    def test_json_exists_false_before_save(self, tmp_path: Path) -> None:
+        s = JsonStorage(tmp_path / "index.json")
+        assert s.exists() is False
+
+    def test_json_exists_true_after_save(self, tmp_path: Path) -> None:
+        s = JsonStorage(tmp_path / "index.json")
+        s.save(_make_index())
+        assert s.exists() is True
+
+    def test_sqlite_exists_true_after_init(self, tmp_path: Path) -> None:
+        # SQLite creates the file on connect
+        s = SqliteStorage(tmp_path / "index.db")
+        assert s.exists() is True
+
+
+class TestPath:
+    """path property returns correct path."""
+
+    def test_json_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "my-index.json"
+        s = JsonStorage(p)
+        assert s.path == p
+
+    def test_sqlite_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "my-index.db"
+        s = SqliteStorage(p)
+        assert s.path == p
+
+
+class TestCreateStorageFactory:
+    """create_storage() factory selects correct backend."""
+
+    def _make_config(self, tmp_path: Path, storage: str = "json") -> AppConfig:
+        return AppConfig(
+            projects={"test": tmp_path / "project"},
+            index_dir=tmp_path,
+            storage=storage,  # type: ignore[arg-type]
+            index_extensions=[".md"],
+            ignore_dirs=[".git"],
+            ignore_files=[],
+            max_file_size_kb=500,
+        )
+
+    def test_json_backend(self, tmp_path: Path) -> None:
+        config = self._make_config(tmp_path, "json")
+        s = create_storage(config)
+        assert isinstance(s, JsonStorage)
+
+    def test_sqlite_backend(self, tmp_path: Path) -> None:
+        config = self._make_config(tmp_path, "sqlite")
+        s = create_storage(config)
+        assert isinstance(s, SqliteStorage)
+
+    def test_sqlite_path_derived_from_index_dir(self, tmp_path: Path) -> None:
+        config = self._make_config(tmp_path, "sqlite")
+        s = create_storage(config)
+        assert s.path == tmp_path / ".doc-index.db"
+
+    def test_auto_migration(self, tmp_path: Path) -> None:
+        """When switching to sqlite, existing JSON is auto-migrated."""
+        # First, save a JSON index
+        json_config = self._make_config(tmp_path, "json")
+        json_storage = create_storage(json_config)
+        card = _make_card(enriched=True)
+        index = _make_index([card])
+        json_storage.save(index)
+        assert (json_config.index_dir / ".doc-index.json").exists()
+
+        # Now switch to sqlite — should auto-migrate
+        sqlite_config = self._make_config(tmp_path, "sqlite")
+        sqlite_storage = create_storage(sqlite_config)
+        assert isinstance(sqlite_storage, SqliteStorage)
+
+        loaded = sqlite_storage.load()
+        assert loaded is not None
+        assert len(loaded.documents) == 1
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.type == "reference"
+        assert loaded_card.summary == "A readme file."
+        assert loaded_card.keywords == ["readme", "docs"]
+
+        # JSON file still exists (backup)
+        assert (json_config.index_dir / ".doc-index.json").exists()
+
+    def test_no_migration_if_sqlite_exists(self, tmp_path: Path) -> None:
+        """If SQLite already exists, no migration happens."""
+        # Create both JSON and SQLite
+        json_config = self._make_config(tmp_path, "json")
+        json_s = create_storage(json_config)
+        json_s.save(_make_index([_make_card("proj", "from-json.md")]))
+
+        sqlite_config = self._make_config(tmp_path, "sqlite")
+        sqlite_s = SqliteStorage(tmp_path / ".doc-index.db")
+        sqlite_s.save(_make_index([_make_card("proj", "from-sqlite.md")]))
+
+        # Factory should return existing SQLite, not re-migrate
+        result = create_storage(sqlite_config)
+        loaded = result.load()
+        assert loaded is not None
+        assert "proj::from-sqlite.md" in loaded.documents
+        assert "proj::from-json.md" not in loaded.documents
+
+
+class TestSqliteSpecific:
+    """SQLite-specific behavior."""
+
+    def test_close(self, tmp_path: Path) -> None:
+        s = SqliteStorage(tmp_path / "index.db")
+        s.save(_make_index())
+        s.close()
+        # After close, creating new instance should work
+        s2 = SqliteStorage(tmp_path / "index.db")
+        loaded = s2.load()
+        assert loaded is not None
+
+    def test_creates_parent_dirs(self, tmp_path: Path) -> None:
+        deep_path = tmp_path / "a" / "b" / "c" / "index.db"
+        s = SqliteStorage(deep_path)
+        assert deep_path.exists()
+        s.save(_make_index())
+        loaded = s.load()
+        assert loaded is not None
+
+    def test_null_enrichment_fields(self, tmp_path: Path) -> None:
+        """Cards with None enrichment fields are stored correctly."""
+        card = _make_card()  # not enriched
+        assert card.type is None
+        assert card.headings is None
+
+        s = SqliteStorage(tmp_path / "index.db")
+        s.save(_make_index([card]))
+        loaded = s.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.type is None
+        assert loaded_card.headings is None
+        assert loaded_card.summary is None
+        assert loaded_card.keywords is None
+        assert loaded_card.enriched_at is None

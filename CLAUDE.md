@@ -45,7 +45,7 @@ MCP server for navigating the constellation of knowledge scattered across projec
 **Astrolabe index check** (if astrolabe MCP is connected):
 - Call `get_cosmos()` → check `desync_documents`, `stale_documents`, `empty_documents`
 - If `desync_documents > 0` — warn user: "N files out of sync, may need git pull in projects X, Y"
-- If many stale/empty cards — suggest: "Run /enrich-index to update index coverage"
+- If many stale/empty cards — suggest running `enrich-index` skill to update index coverage
 
 **Development state** — check if `docs/PLAN.md` exists:
 
@@ -81,8 +81,12 @@ MCP server for navigating the constellation of knowledge scattered across projec
 
 Three modes of working, explicitly:
 
-1. **Planned work** — feature, refactor, milestone. Has PLAN.md + PROGRESS.md. Full Code Change Pipeline with all steps.
-2. **Ad-hoc task** — no plan, but same Code Change Pipeline for any code/config/spec changes. Steps marked `[Planned]` are skipped.
+1. **Planned work** — feature, refactor, milestone. Full Code Change Pipeline with all steps.
+   - **Before any code:** create PLAN.md + PROGRESS.md (Step 0). These are project artifacts for traceability across versions and decisions, NOT internal agent notes. The agent's internal reasoning is never a substitute.
+   - PLAN.md must have all steps written before implementation begins.
+   - PROGRESS.md must track decisions and events throughout the work.
+   - User explicitly initiates planned work (e.g. "планируем", "новая задача", "milestone").
+2. **Ad-hoc task** — user explicitly says "ad-hoc" or similar. No PLAN.md/PROGRESS.md, but same Code Change Pipeline for any code/config/spec changes. Steps marked `[Planned]` are skipped.
 3. **Server/index work** — enrichment, reindex, skills usage. No code changes, no pipeline. Follow Astrolabe MCP Usage rules.
 
 ## Code Change Pipeline
@@ -188,15 +192,20 @@ Rules for working with astrolabe MCP tools. This section is universal — copy t
 ### Reindex
 
 - After adding/removing/renaming files → call `reindex_tool()`
-- After mass changes or broken index → `reindex_tool(force=True)`
-- Reindex preserves enrichment; `force=True` resets it for configured projects
+- After deleting/moving files → `reindex_tool(mode="clean")` removes desync cards, keeps enrichment
+- After mass changes or broken index → `reindex_tool(mode="rebuild")` resets enrichment
 - Cards from foreign projects (not in local config) are always preserved (pass-through)
 
 ### Enrichment
 
-- **ALWAYS** use `/enrich-index` skill — **NEVER** enrich cards manually
-- The skill knows document types, summary format, keyword style
+- **NEVER** enrich cards manually — use `enrich-index` skill as the source of enrichment rules
 - Manual `update_index_tool()` only for single-field corrections (e.g., fixing a wrong type)
+- **≤20 stale cards** — invoke the `enrich-index` skill directly (single thread)
+- **>20 stale cards** — parallel enrichment:
+  1. Read `.claude/skills/enrich-index/SKILL.md` for enrichment instructions
+  2. Call `list_docs(stale=true)` to get all cards needing work
+  3. Split cards into groups (by project, or by batches if one project is large)
+  4. Launch subagents in parallel, each receiving: enrichment instructions from the skill + their assigned scope (project filter or list of doc_ids)
 
 ### Search & Navigation
 
@@ -210,4 +219,4 @@ Rules for working with astrolabe MCP tools. This section is universal — copy t
 
 - `desync_documents > 0` → files missing locally or enrichment from another machine
 - Warn user, suggest `git pull` for affected projects
-- To clean up genuinely deleted files → `reindex_tool(force=True)`
+- To clean up genuinely deleted files → `reindex_tool(mode="clean")`

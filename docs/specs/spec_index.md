@@ -6,6 +6,8 @@ Status: READY
 
 Core module: filesystem scanning, index building/loading/saving, content hashing, stale detection, enrichment updates, and reindexing. Uses `filelock` for concurrent access to `.doc-index.json`.
 
+Note: `load_index()` and `save_index()` are used by `JsonStorage` (storage_json.py). The server does not call them directly — it uses the `StorageBackend` protocol via `storage.py`.
+
 ## Public API
 
 ### `scan_project(project_id: str, project_path: Path, config: AppConfig) -> list[DocCard]`
@@ -43,7 +45,7 @@ Full index build from scratch. Scans all projects, creates IndexData.
 - Skips non-existent project paths with a warning (via `logging`)
 - Sets `indexed_at` to current UTC time
 
-### `reindex(config: AppConfig, existing: IndexData | None = None, *, force: bool = False) -> tuple[IndexData, ReindexStats]`
+### `reindex(config: AppConfig, existing: IndexData | None = None, *, mode: Literal["update", "clean", "rebuild"] = "update") -> tuple[IndexData, ReindexStats]`
 
 Rescan filesystem and merge with existing index.
 
@@ -53,7 +55,16 @@ Rescan filesystem and merge with existing index.
 - **Pass-through**: cards from projects NOT in `config.projects` are preserved as-is (not removed)
 - **Desync**: cards from projects in config where file is missing on disk are preserved as desync (not removed)
 - **Desync (informational)**: if `enriched_at > fresh_card.modified`, card is counted as desync (enrichment from another machine)
-- **`force=True`**: fresh cards created without enrichment (clean rebuild). Desync cards (missing files) are removed. Pass-through cards still preserved.
+
+**Modes** (escalating):
+
+| mode | Missing files (desync) | Enrichment | Move detection |
+|------|----------------------|------------|----------------|
+| `update` | preserved | preserved | yes |
+| `clean` | removed | preserved | skipped |
+| `rebuild` | removed | reset | skipped |
+
+Pass-through cards are always preserved regardless of mode.
 - Returns updated IndexData + stats
 
 ### `update_card(index: IndexData, doc_id: str, *, type: str | None = None, summary: str | None = None, keywords: list[str] | None = None, headings: list[str] | None = None) -> DocCard`
@@ -76,7 +87,14 @@ class ReindexStats:
     unchanged: int
     passthrough: int    # cards from projects not in config, preserved as-is
     desync: int         # cards where file is missing or enriched_at > modified
+    potential_moves: list[tuple[str, str]]  # (old_doc_id, new_doc_id) — filename matches
 ```
+
+### Move detection
+
+After merge, reindex compares desync cards (enriched, file missing) with new empty cards by `filename`. If a match is found, it's reported as a potential move in `potential_moves`. The agent can then ask the user and transfer enrichment via `update_index_tool()`.
+
+Only enriched desync cards are candidates — unenriched cards have nothing to transfer. Only runs in `mode="update"` (skipped in `clean` and `rebuild`).
 
 ## Internal Functions
 

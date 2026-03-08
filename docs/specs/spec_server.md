@@ -8,12 +8,13 @@ MCP server exposing 7 tools over stdio transport. Wraps core modules (index, rea
 
 ## Startup Sequence
 
-1. Resolve config path from `ASTROLABE_CONFIG` env var (default: `config.json` in server's directory)
+1. Resolve config path from `ASTROLABE_CONFIG` env var (default: `runtime/config.json`)
 2. `load_config(config_path)`
-3. Load `doc_types.yaml`: look in `index_path.parent` first, fallback to `config_path.parent`
-4. `load_index(config.index_path)` → if exists, `reindex(config, existing)` → `save_index()`
-5. If no existing index: `build_index(config)` → `save_index()`
-6. Start MCP server on stdio
+3. Load `doc_types.yaml`: look in `config.index_dir` first, fallback to `config_path.parent`
+4. `_storage = create_storage(config)` (auto-migrates JSON→SQLite if needed)
+5. `_storage.load()` → if exists, `reindex(config, existing)` → `_storage.save()`
+6. If no existing index: `build_index(config)` → `_storage.save()`
+7. Start MCP server on stdio
 
 ## MCP Tools (7)
 
@@ -48,15 +49,19 @@ Read document content from disk. Delegates to `reader.read_file()`.
 
 ### `update_index(doc_id, type?, summary?, keywords?, headings?) -> update confirmation`
 
-Agent enriches a card. Delegates to `index.update_card()`, then `save_index()`.
+Agent enriches a card. Delegates to `index.update_card()`, then `_storage.save_card()`.
 - Returns updated fields list + enriched_at timestamp
+- SQLite: single INSERT OR REPLACE (~1KB). JSON: full file rewrite.
 
-### `reindex(project?, force?) -> ReindexStats`
+### `reindex(project?, mode?) -> ReindexStats`
 
 Rescan filesystem. If project given, only rescan that project (rebuild full index but filter scan).
-- `force=True`: reset enrichment for configured projects, remove desync cards. Pass-through preserved.
-- Delegates to `index.reindex()`, then `save_index()`
-- Returns stats including `passthrough` and `desync` counts
+- Reloads config from disk to pick up changes (projects, storage, extensions)
+- Recreates `_storage` via `create_storage()` in case `config.storage` changed
+- `mode`: `"update"` (default) | `"clean"` (remove desync, keep enrichment) | `"rebuild"` (remove desync, reset enrichment)
+- Pass-through cards always preserved regardless of mode
+- Delegates to `index.reindex()`, then `_storage.save()`
+- Returns stats including `passthrough`, `desync`, and `potential_moves`
 
 ## Error Handling
 
@@ -64,8 +69,16 @@ All tools return structured JSON. Errors include:
 - `error`: error message
 - `hint`: actionable suggestion (e.g. "run reindex()" if file missing)
 
+## Global State
+
+- `_config: AppConfig | None` — loaded config
+- `_index: IndexData | None` — in-memory index (all reads go here)
+- `_storage: StorageBackend | None` — persistence backend (writes go here)
+- `_doc_types: dict[str, str]` — document type descriptions from doc_types.yaml
+
 ## Dependencies
 
 - `mcp` SDK
 - `astrolabe.__version__`, `astrolabe.config`, `astrolabe.index`, `astrolabe.reader`, `astrolabe.search`, `astrolabe.models`
+- `astrolabe.storage` (StorageBackend, create_storage)
 - `os`, `pathlib`, `logging` (stdlib)

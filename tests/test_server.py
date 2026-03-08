@@ -15,7 +15,7 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
     """Set up server environment with config and index."""
     config = AppConfig(
         projects={"test-project": fake_project},
-        index_path=tmp_path / ".doc-index.json",
+        index_dir=tmp_path,
         index_extensions=[".md", ".yaml", ".yml", ".txt"],
         ignore_dirs=[".git", ".venv", "src", "node_modules", "__pycache__"],
         ignore_files=["*.pyc", "*.lock"],
@@ -26,7 +26,7 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
     config_file = tmp_path / "config.json"
     config_data = {
         "projects": {k: str(v) for k, v in config.projects.items()},
-        "index_path": ".doc-index.json",
+        "index_dir": ".",
         "index_extensions": config.index_extensions,
         "ignore_dirs": config.ignore_dirs,
         "ignore_files": config.ignore_files,
@@ -202,7 +202,7 @@ class TestReindex:
 
 
 class TestDocTypesLookup:
-    """Test doc_types.yaml lookup order: index_path.parent first, config_path.parent fallback."""
+    """Test doc_types.yaml lookup order: index_dir first, config_path.parent fallback."""
 
     def _setup_split_dirs(
         self,
@@ -223,7 +223,7 @@ class TestDocTypesLookup:
         config_file = config_dir / "config.json"
         config_data = {
             "projects": {"test-project": str(fake_project)},
-            "index_path": str(cloud_dir / ".doc-index.json"),
+            "index_dir": str(cloud_dir),
             "index_extensions": [".md", ".txt"],
             "ignore_dirs": [".git"],
             "ignore_files": [],

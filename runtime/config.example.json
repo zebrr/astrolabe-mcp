@@ -3,8 +3,10 @@
     "my-project": "/path/to/my-project",
     "another-project": "/path/to/another-project"
   },
-  "index_path": ".doc-index.json",
-  "_index_path_note": "For cross-platform sync, use absolute path to cloud folder, e.g. G:/My Drive/astrolabe/.doc-index.json (Win) or /Volumes/GoogleDrive/My Drive/astrolabe/.doc-index.json (Mac)",
+  "index_dir": ".",
+  "storage": "json",
+  "_storage_note": "\"json\" (default) or \"sqlite\". SQLite uses single-row upserts for enrichment — much faster for large indexes. Switching to sqlite auto-migrates existing JSON index.",
+  "_index_dir_note": "Directory for index files (.doc-index.json or .doc-index.db). For cross-platform sync, use absolute path to cloud folder, e.g. G:/My Drive/astrolabe (Win) or /Volumes/GoogleDrive/My Drive/astrolabe (Mac)",
   "index_extensions": [
     ".md", ".yaml", ".yml", ".txt", ".py", ".sh",
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",

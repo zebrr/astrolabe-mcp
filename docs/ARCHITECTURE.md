@@ -34,6 +34,9 @@ astrolabe-mcp/
 │   ├── index.py             # FS scanning, index, stale detection
 │   ├── reader.py            # file reading, section extraction
 │   ├── search.py            # text search over enriched cards
+│   ├── storage.py           # StorageBackend Protocol + factory
+│   ├── storage_json.py      # JSON file storage backend
+│   ├── storage_sqlite.py    # SQLite storage backend
 │   └── server.py            # MCP transport: tools → core
 └── tests/                   # pytest, tmp_path fixtures
 ```
@@ -47,14 +50,18 @@ astrolabe-mcp/
 | index.py | done | spec_index.md | Core: scan projects, build/load/save index, hash, stale detection |
 | reader.py | done | spec_reader.md | Read files: full, by section heading, by line range |
 | search.py | done | spec_search.md | Token matching with field weights over enriched cards |
-| server.py | done | spec_server.md | 7 MCP tools wrapping core functions |
+| storage.py | done | spec_storage.md | StorageBackend Protocol + create_storage() factory |
+| storage_json.py | done | spec_storage.md | JSON file backend (wraps index.py load/save) |
+| storage_sqlite.py | done | spec_storage.md | SQLite backend (single-row upserts, cloud-safe) |
+| server.py | done | spec_server.md | 7 MCP tools wrapping core functions via StorageBackend |
 
 ## Dependencies
 
 ```
-models.py ← config.py ← index.py ← server.py
-models.py ← reader.py ←───────────┘
-models.py ← search.py ←───────────┘
+models.py ← config.py ← index.py ← storage_json.py ← storage.py ← server.py
+models.py ← reader.py ←──────────────────────────────────────────────┘
+models.py ← search.py ←──────────────────────────────────────────────┘
+models.py ← storage_sqlite.py ← storage.py
 ```
 
 ## MCP Tools (7)
@@ -65,11 +72,14 @@ See `docs/CONCEPT.md` for full tool specifications.
 
 ## Key Technical Decisions
 
-- Index stored as JSON (`.doc-index.json`), `filelock` for concurrent access
+- Pluggable storage: JSON (`.doc-index.json`, filelock) or SQLite (`.doc-index.db`, journal_mode=DELETE)
+- Config switch: `"storage": "json"` (default) or `"storage": "sqlite"`
+- Auto-migration: switching config to sqlite auto-converts existing JSON index
+- SQLite: single-row upserts for enrichment (vs full-file rewrite in JSON)
 - `ignore_dirs` / `ignore_files` fully configurable in config.json
 - Content hash: MD5 with CRLF→LF normalization for cross-platform consistency
 - Search: token-level matching with field weights (keywords 3.0, filename 2.5, headings 2.0, summary 1.0)
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings
 - Shared index: pass-through for foreign project cards, desync detection for missing files
-- Force reindex: `reindex(force=True)` resets enrichment, respects pass-through
-- doc_types.yaml lookup: `index_path.parent` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)
+- Reindex modes: `update` (preserve all) → `clean` (remove desync) → `rebuild` (reset enrichment)
+- doc_types.yaml lookup: `index_dir` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)

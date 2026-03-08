@@ -15,7 +15,7 @@ class TestLoadConfig:
             json.dumps(
                 {
                     "projects": {"proj": str(tmp_path / "proj")},
-                    "index_path": ".doc-index.json",
+                    "index_dir": ".",
                     "index_extensions": [".md"],
                     "ignore_dirs": [".git"],
                     "ignore_files": ["*.pyc"],
@@ -28,14 +28,14 @@ class TestLoadConfig:
         assert config.projects["proj"] == tmp_path / "proj"
         assert config.max_file_size_kb == 100
 
-    def test_index_path_resolved_relative_to_config_dir(self, tmp_path: Path) -> None:
+    def test_index_dir_resolved_relative_to_config_dir(self, tmp_path: Path) -> None:
         config_file = tmp_path / "subdir" / "config.json"
         config_file.parent.mkdir()
         config_file.write_text(
             json.dumps(
                 {
                     "projects": {},
-                    "index_path": ".doc-index.json",
+                    "index_dir": ".",
                     "index_extensions": [],
                     "ignore_dirs": [],
                     "ignore_files": [],
@@ -45,7 +45,7 @@ class TestLoadConfig:
         )
 
         config = load_config(config_file)
-        assert config.index_path == tmp_path / "subdir" / ".doc-index.json"
+        assert config.index_dir == tmp_path / "subdir"
 
     def test_nonexistent_project_paths_kept(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.json"
@@ -53,7 +53,7 @@ class TestLoadConfig:
             json.dumps(
                 {
                     "projects": {"ghost": "/nonexistent/path"},
-                    "index_path": ".doc-index.json",
+                    "index_dir": ".",
                     "index_extensions": [],
                     "ignore_dirs": [],
                     "ignore_files": [],

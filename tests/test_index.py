@@ -71,7 +71,7 @@ class TestScanProject:
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md", ".pyc", ".lock"],
             ignore_dirs=[],
             ignore_files=["*.pyc", "*.lock"],
@@ -162,7 +162,7 @@ class TestBuildIndex:
     def test_skips_nonexistent_projects(self, tmp_path: Path) -> None:
         config = AppConfig(
             projects={"ghost": Path("/nonexistent/path")},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -182,7 +182,7 @@ class TestBuildIndex:
 
         config = AppConfig(
             projects={"a": proj_a, "b": proj_b},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -312,7 +312,7 @@ class TestPassthrough:
 
         config = AppConfig(
             projects={"a": proj_a},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -350,7 +350,7 @@ class TestPassthrough:
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -376,7 +376,7 @@ class TestDesync:
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -394,15 +394,15 @@ class TestDesync:
         assert "proj::doc.md" in index2.documents
 
 
-class TestForceReindex:
-    def test_force_resets_enrichment(self, tmp_path: Path) -> None:
+class TestReindexModes:
+    def test_rebuild_resets_enrichment(self, tmp_path: Path) -> None:
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "doc.md").write_text("content")
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -414,21 +414,21 @@ class TestForceReindex:
         card.summary = "A spec"
         card.enriched_at = datetime(2026, 3, 5, tzinfo=UTC)
 
-        index2, stats = reindex(config, existing=index, force=True)
+        index2, stats = reindex(config, existing=index, mode="rebuild")
         assert stats.new == 1
         new_card = index2.documents["proj::doc.md"]
         assert new_card.type is None
         assert new_card.summary is None
         assert new_card.enriched_at is None
 
-    def test_force_preserves_foreign_cards(self, tmp_path: Path) -> None:
+    def test_rebuild_preserves_foreign_cards(self, tmp_path: Path) -> None:
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "doc.md").write_text("content")
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -449,19 +449,19 @@ class TestForceReindex:
         )
         index.documents[foreign.doc_id] = foreign
 
-        index2, stats = reindex(config, existing=index, force=True)
+        index2, stats = reindex(config, existing=index, mode="rebuild")
         assert stats.passthrough == 1
         assert "other::f.md" in index2.documents
         assert index2.documents["other::f.md"].type == "guide"
 
-    def test_force_removes_desync_cards(self, tmp_path: Path) -> None:
+    def test_rebuild_removes_desync_cards(self, tmp_path: Path) -> None:
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "doc.md").write_text("content")
 
         config = AppConfig(
             projects={"proj": proj},
-            index_path=tmp_path / ".doc-index.json",
+            index_dir=tmp_path,
             index_extensions=[".md"],
             ignore_dirs=[],
             ignore_files=[],
@@ -469,17 +469,156 @@ class TestForceReindex:
         )
         index, _ = reindex(config)
 
-        # Delete file — will be desync without force, removed with force
+        # Delete file — will be desync in update, removed in rebuild
         (proj / "doc.md").unlink()
 
-        index2, stats = reindex(config, existing=index, force=True)
+        index2, stats = reindex(config, existing=index, mode="rebuild")
         assert stats.removed == 1
         assert "proj::doc.md" not in index2.documents
 
-    def test_default_force_false_backward_compatible(
-        self, fake_project: Path, sample_config: AppConfig
-    ) -> None:
+    def test_clean_removes_desync_keeps_enrichment(self, tmp_path: Path) -> None:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a.md").write_text("content a")
+        (proj / "b.md").write_text("content b")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Enrich both cards
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::a.md", type="spec", summary="Spec A")
+        update_card(index, "proj::b.md", type="guide", summary="Guide B")
+
+        # Delete one file — only it should be removed, other keeps enrichment
+        (proj / "b.md").unlink()
+
+        index2, stats = reindex(config, existing=index, mode="clean")
+        assert stats.removed == 1
+        assert stats.unchanged == 1
+        assert "proj::b.md" not in index2.documents
+        # Enrichment preserved on surviving card
+        assert index2.documents["proj::a.md"].type == "spec"
+        assert index2.documents["proj::a.md"].summary == "Spec A"
+
+    def test_clean_skips_move_detection(self, tmp_path: Path) -> None:
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::doc.md", type="spec", summary="Spec")
+
+        (proj / "sub").mkdir()
+        (proj / "doc.md").rename(proj / "sub" / "doc.md")
+
+        _, stats = reindex(config, existing=index, mode="clean")
+        assert len(stats.potential_moves) == 0
+        assert stats.removed == 1
+
+    def test_default_mode_update(self, fake_project: Path, sample_config: AppConfig) -> None:
         index, _ = reindex(sample_config)
         index2, stats = reindex(sample_config, existing=index)
         assert stats.unchanged == 5
         assert stats.new == 0
+
+
+class TestPotentialMoves:
+    def test_detects_move_by_filename(self, tmp_path: Path) -> None:
+        """File moved to a new path: old card is desync, new card matches by filename."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        # Enrich the card
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::docs/guide.md", type="reference", summary="A guide")
+
+        # Move the file
+        (proj / "archive").mkdir()
+        (proj / "docs" / "guide.md").rename(proj / "archive" / "guide.md")
+
+        index2, stats = reindex(config, existing=index)
+        assert stats.desync == 1  # old card missing
+        assert stats.new == 1  # new card at new path
+        assert len(stats.potential_moves) == 1
+        assert stats.potential_moves[0] == ("proj::docs/guide.md", "proj::archive/guide.md")
+
+    def test_no_move_if_old_card_not_enriched(self, tmp_path: Path) -> None:
+        """Only enriched desync cards are candidates for move detection."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+        # Don't enrich — card is empty
+
+        # Move the file
+        (proj / "sub").mkdir()
+        (proj / "doc.md").rename(proj / "sub" / "doc.md")
+
+        _, stats = reindex(config, existing=index)
+        assert len(stats.potential_moves) == 0
+
+    def test_no_move_on_rebuild(self, tmp_path: Path) -> None:
+        """Rebuild mode skips move detection."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::doc.md", type="spec", summary="Spec")
+
+        (proj / "sub").mkdir()
+        (proj / "doc.md").rename(proj / "sub" / "doc.md")
+
+        _, stats = reindex(config, existing=index, mode="rebuild")
+        assert len(stats.potential_moves) == 0

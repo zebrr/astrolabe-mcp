@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -12,7 +13,8 @@ class AppConfig(BaseModel):
     """Application configuration loaded from config.json."""
 
     projects: dict[str, Path]
-    index_path: Path
+    index_dir: Path
+    storage: Literal["json", "sqlite"] = "json"
     index_extensions: list[str]
     ignore_dirs: list[str]
     ignore_files: list[str]
