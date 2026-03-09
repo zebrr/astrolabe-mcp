@@ -92,6 +92,7 @@ class ProjectSummary(BaseModel):
     id: str
     doc_count: int
     enriched_count: int
+    desync_count: int = 0          # files missing on disk (runtime check)
     last_indexed: datetime
 ```
 

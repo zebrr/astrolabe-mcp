@@ -39,12 +39,16 @@ Entry point. Returns projects, document types, index stats.
 - Builds CosmosResponse from current index + doc_types
 - Uses `config.all_projects` for project stats and desync detection
 - `document_types` from real index (only assigned types), descriptions from doc_types.yaml
-- `desync_documents`: count of cards where file missing on disk (project in config)
+- `desync_documents`: global count of cards where file missing on disk (project in config)
+- Each `ProjectSummary` includes `desync_count` — per-project desync count (runtime file existence check via `_is_desync()`)
 
-### `list_docs(project?, type?, stale?) -> list[DocCard summary]`
+### `list_docs(project?, type?, stale?, desync?) -> list[DocCard summary]`
 
 List document cards with optional filters.
 - `stale=true`: only cards where `is_stale or is_empty`
+- `desync=true`: only cards whose files are missing on disk (runtime file existence check via `_is_desync()`)
+- Filters are AND-combined: `stale=true, desync=true` returns cards matching both conditions
+- Pass-through cards (project not in config) are never desync
 - Returns card summaries (doc_id, project, type, filename, summary, keywords, modified, enriched_at)
 
 ### `search_docs(query, project?, type?) -> list[SearchResult]`
@@ -108,6 +112,11 @@ Splits `_index.documents` into shared and private cards based on `config.is_priv
 - Saves shared cards to `_storage`
 - Saves private cards to `_private_storage` (if exists)
 - If no `_private_storage`: saves all cards to `_storage` (backward compat)
+
+### `_is_desync(card: DocCard, config: AppConfig) -> bool`
+
+Check if a card's file is missing on disk. Returns `False` for pass-through cards (project not in config).
+Used by `get_cosmos()` and `list_docs()` to avoid duplicating desync logic.
 
 ### `_get_storage_for_project(project: str) -> StorageBackend`
 

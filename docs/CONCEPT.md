@@ -58,14 +58,8 @@ MCP-сервер, который создаёт **прозрачный knowledge
   "private_projects": {},
   "private_index_dir": null,
   "index_extensions": [".md", ".yaml", ".yml", ".txt", ".py", ".sh"],
-  "ignore_dirs": [
-    "src", "lib", "app", "tests", "test",
-    "dist", "build", "node_modules", ".venv", "venv",
-    "__pycache__", ".pytest_cache", ".mypy_cache",
-    ".git", ".idea", ".vscode", ".claude",
-    "tmp", "temp"
-  ],
-  "ignore_files": ["*.pyc", "*.lock", ".env*"],
+  "ignore_dirs": ["src", "lib", "app", "tests", "test"],
+  "ignore_files": ["*.lock"],
   "max_file_size_kb": 100
 }
 ```
@@ -75,7 +69,7 @@ MCP-сервер, который создаёт **прозрачный knowledge
 
 **Что индексируем:** документацию (`.md`, `.yaml`, `.yml`, `.txt`), утилиты и скрипты (`.py`, `.sh`). Также поддерживаются бинарные файлы (`.pdf`, `.docx`, медиа) — индексируются по метаданным.
 
-**Что исключаем:** `ignore_dirs` — имена директорий (не пути), пропускаются на любой глубине. `ignore_files` — glob-паттерны для файлов. `max_file_size_kb` — лимит для полного чтения через `read_doc()`.
+**Что исключаем:** git-aware сканирование автоматически исключает gitignored файлы. `ignore_dirs` — имена директорий (не пути), пропускаются на любой глубине — для domain-specific исключений (git-tracked, но не нужные в индексе). `ignore_files` — glob-паттерны для файлов. `max_file_size_kb` — лимит для полного чтения через `read_doc()`.
 
 **`index_dir`** — директория для файлов индекса (`.doc-index.json` или `.doc-index.db`). Для кросс-платформенной синхронизации можно указать абсолютный путь к облачной папке (Google Drive, OneDrive).
 
@@ -307,12 +301,14 @@ MCP-сервер НЕ содержит никакого LLM, НЕ классиф
       "id": "web-app",
       "doc_count": 24,
       "enriched_count": 20,
+      "desync_count": 1,
       "last_indexed": "2026-03-07T12:00:00Z"
     },
     {
       "id": "data-lib",
       "doc_count": 10,
       "enriched_count": 8,
+      "desync_count": 1,
       "last_indexed": "2026-03-07T12:00:00Z"
     }
   ],
@@ -338,7 +334,7 @@ MCP-сервер НЕ содержит никакого LLM, НЕ классиф
 
 ---
 
-### `list_docs(project?, type?, stale?)`
+### `list_docs(project?, type?, stale?, desync?)`
 
 Список карточек документов с фильтрами.
 
@@ -348,6 +344,7 @@ MCP-сервер НЕ содержит никакого LLM, НЕ классиф
 | project | string | нет | Фильтр по проекту |
 | type | string | нет | Фильтр по типу документа |
 | stale | bool | нет | `true` — только stale/empty карточки (modified > enriched_at или enriched_at == null) |
+| desync | bool | нет | `true` — только карточки, чьи файлы отсутствуют на диске (удалены или не синхронизированы) |
 
 **Возвращает:** массив карточек
 ```json

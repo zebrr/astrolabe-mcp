@@ -12,8 +12,13 @@ Note: `load_index()` and `save_index()` are used by `JsonStorage` (storage_json.
 
 ### `scan_project(project_id: str, project_path: Path, config: AppConfig) -> list[DocCard]`
 
-Walk a project directory and create DocCard entries for all matching files.
+Discover files in a project directory and create DocCard entries for all matching files.
 
+**File discovery** (two-tier):
+1. **Git-aware** (primary): uses `git ls-files --cached --others --exclude-standard` — returns tracked files + untracked non-ignored files. Gitignored files are automatically excluded.
+2. **Fallback** (`rglob`): if project is not a git repo or git is not installed, falls back to `project_path.rglob("*")`.
+
+**Filtering** (applied uniformly to both sources):
 - Skips directories whose name is in `config.ignore_dirs`
 - Skips files matching any `config.ignore_files` glob pattern
 - Only includes files with extensions in `config.index_extensions`
@@ -115,11 +120,27 @@ MD5 hex digest of file contents via `Path.read_bytes()`. Normalizes line endings
 
 Check if filename matches any glob pattern from ignore_files.
 
+### `_list_files_git(project_path: Path) -> list[Path] | None`
+
+List files via `git ls-files --cached --others --exclude-standard`.
+
+- Returns list of absolute Paths on success
+- Returns `None` if not a git repo (non-zero returncode) or git not installed (`FileNotFoundError`)
+- Returns empty list for valid git repo with no files
+- Timeout: 30 seconds
+- Logs at INFO level when falling back to rglob
+
+### `_list_files_rglob(project_path: Path) -> list[Path]`
+
+List files via `project_path.rglob("*")`. Filters to `is_file()` and not `is_symlink()`.
+
+Fallback for non-git directories.
+
 ## Dependencies
 
 - `astrolabe.models` (AppConfig, DocCard, IndexData)
 - `filelock`
-- `hashlib`, `json`, `logging`, `datetime`, `pathlib`, `fnmatch`, `tempfile` (stdlib)
+- `subprocess`, `hashlib`, `json`, `logging`, `datetime`, `pathlib`, `fnmatch`, `tempfile` (stdlib)
 
 ## Data Flow
 

@@ -17,14 +17,8 @@
     ".mp3", ".wav", ".ogg", ".flac",
     ".mp4", ".mov", ".avi", ".webm"
   ],
-  "ignore_dirs": [
-    "src", "lib", "app",
-    "tests", "test",
-    "dist", "build", "node_modules", ".venv", "venv",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-    ".git", ".idea", ".vscode", ".claude", ".qwen",
-    "tmp", "temp"
-  ],
-  "ignore_files": ["*.pyc", "*.lock", ".env*"],
+  "_ignore_note": "Git-aware scanning excludes gitignored files automatically. ignore_dirs/ignore_files only need domain-specific exclusions — git-tracked dirs/files you don't want in the knowledge index.",
+  "ignore_dirs": ["src", "lib", "app", "tests", "test"],
+  "ignore_files": ["*.lock"],
   "max_file_size_kb": 100
 }

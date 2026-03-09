@@ -11,7 +11,14 @@ from mcp.server.fastmcp import FastMCP
 from astrolabe import __version__
 from astrolabe.config import load_config, load_doc_types_full
 from astrolabe.index import build_index, reindex, update_card
-from astrolabe.models import AppConfig, CosmosResponse, IndexData, ProjectSummary, TypeSummary
+from astrolabe.models import (
+    AppConfig,
+    CosmosResponse,
+    DocCard,
+    IndexData,
+    ProjectSummary,
+    TypeSummary,
+)
 from astrolabe.reader import read_file
 from astrolabe.search import search
 from astrolabe.storage import StorageBackend, create_storage, create_storage_at
@@ -148,6 +155,14 @@ def _get_state() -> tuple[AppConfig, IndexData]:
     return _config, _index
 
 
+def _is_desync(card: DocCard, config: AppConfig) -> bool:
+    """Check if card's file is missing on disk (project must be configured locally)."""
+    if card.project not in config.all_projects:
+        return False
+    file_path = config.all_projects[card.project] / card.rel_path
+    return not file_path.exists()
+
+
 @mcp.tool()
 def get_doc_types() -> dict[str, dict[str, Any]]:
     """Get the document type vocabulary from doc_types.yaml.
@@ -165,6 +180,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
 
     Returns project list, document type stats, enrichment coverage, and sync status.
     Check desync_documents — if > 0, some files are missing on disk (run reindex).
+    Each project includes desync_count — check which project has missing files.
     Check stale_documents — if > 0, file content changed since enrichment (re-enrich).
     """
     config, index = _get_state()
@@ -172,7 +188,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     # Per-project stats
     project_stats: dict[str, dict[str, int]] = {}
     for pid in config.all_projects:
-        project_stats[pid] = {"doc_count": 0, "enriched_count": 0}
+        project_stats[pid] = {"doc_count": 0, "enriched_count": 0, "desync_count": 0}
 
     total = len(index.documents)
     enriched = 0
@@ -187,11 +203,9 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             if not card.is_empty:
                 project_stats[card.project]["enriched_count"] += 1
 
-            # Desync: file missing on disk (deleted or not synced from another machine)
-            if card.project in config.all_projects:
-                file_path = config.all_projects[card.project] / card.rel_path
-                if not file_path.exists():
-                    desync += 1
+            if _is_desync(card, config):
+                desync += 1
+                project_stats[card.project]["desync_count"] += 1
 
         if card.is_empty:
             empty += 1
@@ -209,6 +223,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             id=pid,
             doc_count=stats["doc_count"],
             enriched_count=stats["enriched_count"],
+            desync_count=stats["desync_count"],
             last_indexed=index.indexed_at,
         )
         for pid, stats in project_stats.items()
@@ -242,6 +257,7 @@ def list_docs(
     project: str | None = None,
     type: str | None = None,
     stale: bool | None = None,
+    desync: bool | None = None,
 ) -> list[dict]:  # type: ignore[type-arg]
     """List document cards with optional filters.
 
@@ -250,8 +266,11 @@ def list_docs(
         type: Filter by document type (e.g. "reference", "spec", "task").
         stale: If true, return cards that need enrichment — both empty (never enriched)
             and stale (enriched but file changed since).
+        desync: If true, return only cards whose files are missing on disk
+            (deleted or not synced from another machine). Use with project filter
+            to diagnose desync in a specific project.
     """
-    _, index = _get_state()
+    config, index = _get_state()
 
     results = []
     for card in index.documents.values():
@@ -260,6 +279,8 @@ def list_docs(
         if type is not None and card.type != type:
             continue
         if stale is True and not (card.is_stale or card.is_empty):
+            continue
+        if desync is True and not _is_desync(card, config):
             continue
 
         results.append(

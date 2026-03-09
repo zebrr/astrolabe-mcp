@@ -18,6 +18,7 @@ Astrolabe is a **dumb server + smart agent** architecture. The server only walks
 
 ## Key Features
 
+- **Git-aware scanning** — uses `git ls-files` to respect `.gitignore` automatically, with rglob fallback for non-git directories
 - **Cross-project search** — find documents across all indexed projects from any agent
 - **Agent-powered enrichment** — the LLM classifies, summarizes, and tags documents
 - **Progressive disclosure** — browse the catalog first, read files only when needed
@@ -69,23 +70,17 @@ Done. The server starts automatically when the client launches.
     ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
     ".mp3", ".wav", ".mp4", ".mov"
   ],
-  "ignore_dirs": [
-    "src", "lib", "app", "tests", "test",
-    "dist", "build", "node_modules", ".venv", "venv",
-    "__pycache__", ".pytest_cache", ".mypy_cache",
-    ".git", ".idea", ".vscode", ".claude",
-    "tmp", "temp"
-  ],
-  "ignore_files": ["*.pyc", "*.lock", ".env*"],
+  "ignore_dirs": ["src", "lib", "app", "tests", "test"],
+  "ignore_files": ["*.lock"],
   "max_file_size_kb": 100
 }
 ```
 
 **Storage backend:** `"json"` (default) or `"sqlite"`. JSON works out of the box. Switch to SQLite for large indexes (500+ cards) — enrichment writes ~1KB per card instead of rewriting the entire file. Changing the setting auto-migrates the existing JSON index, no re-enrichment needed.
 
-**What gets indexed:** files matching `index_extensions` in project directories, excluding `ignore_dirs` and `ignore_files`.
+**What gets indexed:** files matching `index_extensions` in project directories. Git-aware scanning uses `git ls-files` to automatically exclude gitignored files (`.venv/`, `node_modules/`, `__pycache__/`, etc.). For non-git directories, falls back to recursive file walking.
 
-**Note:** `ignore_dirs` are directory names, not paths. If `src` is in the list, every `src/` folder anywhere in the project tree is skipped. Remove it if you want to index source code.
+**Note:** `ignore_dirs` and `ignore_files` are for **domain-specific exclusions** — git-tracked directories/files you don't want in the knowledge index. For example, `src` excludes source code that git tracks but isn't useful as knowledge documents. Gitignored paths are excluded automatically and don't need to be listed here.
 
 ### Document Types (`runtime/doc_types.yaml`)
 
@@ -216,7 +211,7 @@ Each query token and each word in a field are stemmed with both EN and RU Snowba
 |------|-------------|
 | `get_doc_types()` | Document type vocabulary from doc_types.yaml (descriptions + examples) |
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
-| `list_docs(project?, type?, stale?)` | List document cards with filters |
+| `list_docs(project?, type?, stale?, desync?)` | List document cards with filters |
 | `search_docs(query, project?, type?)` | Search by query with relevance ranking |
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |

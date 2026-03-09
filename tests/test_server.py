@@ -98,6 +98,63 @@ class TestListDocs:
         assert len(result) == 5  # all are empty = stale
 
 
+class TestDesync:
+    """Tests for desync visibility: per-project count in cosmos, desync filter in list_docs."""
+
+    def test_cosmos_no_desync(self, server_env: AppConfig) -> None:
+        result = srv.get_cosmos()
+        assert result["desync_documents"] == 0
+        assert result["projects"][0]["desync_count"] == 0
+
+    def test_cosmos_desync_count(self, server_env: AppConfig, fake_project: Path) -> None:
+        # Delete a file to create desync
+        (fake_project / "README.md").unlink()
+        result = srv.get_cosmos()
+        assert result["desync_documents"] == 1
+        assert result["projects"][0]["desync_count"] == 1
+
+    def test_list_docs_desync_filter(self, server_env: AppConfig, fake_project: Path) -> None:
+        (fake_project / "README.md").unlink()
+        result = srv.list_docs(desync=True)
+        assert len(result) == 1
+        assert result[0]["filename"] == "README.md"
+
+    def test_list_docs_desync_with_project_filter(
+        self, server_env: AppConfig, fake_project: Path
+    ) -> None:
+        (fake_project / "README.md").unlink()
+        result = srv.list_docs(project="test-project", desync=True)
+        assert len(result) == 1
+        result = srv.list_docs(project="nonexistent", desync=True)
+        assert len(result) == 0
+
+    def test_list_docs_no_desync(self, server_env: AppConfig) -> None:
+        # No files deleted — desync filter returns nothing
+        result = srv.list_docs(desync=True)
+        assert len(result) == 0
+
+    def test_passthrough_not_counted_as_desync(self, server_env: AppConfig) -> None:
+        # Manually add a card from an unconfigured project
+        from astrolabe.models import DocCard
+
+        assert srv._index is not None
+        card = DocCard(
+            project="foreign-project",
+            filename="doc.md",
+            rel_path="doc.md",
+            size=100,
+            modified=srv._index.indexed_at,
+            content_hash="abc123",
+        )
+        srv._index.documents[card.doc_id] = card
+
+        result = srv.get_cosmos()
+        assert result["desync_documents"] == 0
+
+        result = srv.list_docs(desync=True)
+        assert len(result) == 0
+
+
 class TestSearchDocs:
     def test_search_by_filename(self, server_env: AppConfig) -> None:
         result = srv.search_docs(query="README")

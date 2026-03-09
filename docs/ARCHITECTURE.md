@@ -47,7 +47,7 @@ astrolabe-mcp/
 |--------|--------|------|---------|
 | models.py | done | spec_models.md | Data contracts: AppConfig (shared+private projects), DocCard, IndexData, SearchResult, CosmosResponse |
 | config.py | done | spec_config.md | Load config.json + doc_types.yaml, resolve private_index_dir |
-| index.py | done | spec_index.md | Core: scan projects, build/load/save index, hash, stale detection |
+| index.py | done | spec_index.md | Core: git-aware scan, build/load/save index, hash, stale detection |
 | reader.py | done | spec_reader.md | Read files: full, by section heading, by line range |
 | search.py | done | spec_search.md | Bilingual stem matching (EN+RU) with field weights over enriched cards |
 | storage.py | done | spec_storage.md | StorageBackend Protocol + create_storage() factory |
@@ -76,7 +76,7 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Config switch: `"storage": "json"` (default) or `"storage": "sqlite"`
 - Auto-migration: switching config to sqlite auto-converts existing JSON index
 - SQLite: single-row upserts for enrichment (vs full-file rewrite in JSON)
-- `ignore_dirs` / `ignore_files` fully configurable in config.json
+- Git-aware scanning: `scan_project()` uses `git ls-files` as primary source, falls back to `rglob("*")` for non-git directories. Gitignored files excluded automatically; `ignore_dirs`/`ignore_files` only needed for domain-specific exclusions (e.g. `src/` tracked by git but not wanted in index)
 - Content hash: MD5 with CRLF→LF normalization for cross-platform consistency
 - Search: bilingual stem matching (EN+RU via snowballstemmer) with field weights (keywords 3.0, headings 2.0, summary 1.5, filename 0.8)
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings

@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -49,15 +50,54 @@ def _matches_ignore_files(filename: str, patterns: list[str]) -> bool:
     return any(fnmatch(filename, pat) for pat in patterns)
 
 
+def _list_files_git(project_path: Path) -> list[Path] | None:
+    """List files via git ls-files. Returns None if not a git repo or git unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        logger.info("git not found, falling back to rglob for %s", project_path)
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("git ls-files timed out for %s, falling back to rglob", project_path)
+        return None
+
+    if result.returncode != 0:
+        logger.info("Not a git repo: %s, falling back to rglob", project_path)
+        return None
+
+    lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
+    return [project_path / line for line in lines]
+
+
+def _list_files_rglob(project_path: Path) -> list[Path]:
+    """List files via rglob (fallback for non-git directories)."""
+    return [p for p in project_path.rglob("*") if p.is_file() and not p.is_symlink()]
+
+
 def scan_project(project_id: str, project_path: Path, config: AppConfig) -> list[DocCard]:
-    """Walk a project directory and create DocCards for matching files."""
+    """Discover files in a project and create DocCards for matching files.
+
+    Uses git ls-files as primary source; falls back to rglob for non-git directories.
+    Astrolabe filters (ignore_dirs, ignore_files, index_extensions) apply on top.
+    """
     cards: list[DocCard] = []
 
     if not project_path.is_dir():
         logger.warning("Project path does not exist: %s", project_path)
         return cards
 
-    for file_path in project_path.rglob("*"):
+    # Two-tier file discovery: git-aware primary, rglob fallback
+    file_paths = _list_files_git(project_path)
+    if file_paths is None:
+        file_paths = _list_files_rglob(project_path)
+
+    for file_path in file_paths:
         if not file_path.is_file() or file_path.is_symlink():
             continue
 

@@ -2,12 +2,15 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from astrolabe import __version__
 from astrolabe.index import (
     _compute_hash,
+    _list_files_git,
+    _list_files_rglob,
     build_index,
     load_index,
     reindex,
@@ -805,3 +808,116 @@ class TestMoveDetection:
 
         _, stats = reindex(config, existing=index, mode="rebuild")
         assert len(stats.auto_transferred) == 0
+
+
+class TestGitAwareScan:
+    """Tests for git-aware file discovery in scan_project."""
+
+    def test_excludes_gitignored(self, fake_git_project: Path, git_config: AppConfig) -> None:
+        """Gitignored files (.venv/, __pycache__/) should not appear."""
+        cards = scan_project("my-git-project", fake_git_project, git_config)
+        paths = {c.rel_path for c in cards}
+        assert not any(".venv" in p for p in paths)
+        assert not any("__pycache__" in p for p in paths)
+        assert not any(".pyc" in p for p in paths)
+
+    def test_includes_untracked_not_ignored(
+        self, fake_git_project: Path, git_config: AppConfig
+    ) -> None:
+        """Untracked files not matching .gitignore should appear."""
+        cards = scan_project("my-git-project", fake_git_project, git_config)
+        filenames = {c.filename for c in cards}
+        assert "untracked.md" in filenames
+
+    def test_still_applies_ignore_dirs(
+        self, fake_git_project: Path, git_config: AppConfig
+    ) -> None:
+        """src/ is tracked by git but excluded by astrolabe ignore_dirs."""
+        cards = scan_project("my-git-project", fake_git_project, git_config)
+        paths = {c.rel_path for c in cards}
+        assert not any("src/" in p for p in paths)
+
+    def test_still_applies_index_extensions(
+        self, fake_git_project: Path, git_config: AppConfig
+    ) -> None:
+        """Only files with configured extensions pass."""
+        cards = scan_project("my-git-project", fake_git_project, git_config)
+        for card in cards:
+            assert Path(card.filename).suffix in git_config.index_extensions
+
+    def test_finds_committed_docs(self, fake_git_project: Path, git_config: AppConfig) -> None:
+        """Committed .md files should be found."""
+        cards = scan_project("my-git-project", fake_git_project, git_config)
+        filenames = {c.filename for c in cards}
+        assert "README.md" in filenames
+        assert "guide.md" in filenames
+
+    def test_fallback_non_git(self, fake_project: Path, sample_config: AppConfig) -> None:
+        """Non-git directory falls back to rglob."""
+        cards = scan_project("my-project", fake_project, sample_config)
+        filenames = {c.filename for c in cards}
+        # Should still find files via rglob fallback
+        assert "README.md" in filenames
+        assert len(cards) == 5
+
+    def test_fallback_git_not_installed(
+        self, fake_git_project: Path, git_config: AppConfig
+    ) -> None:
+        """When git is not installed, falls back to rglob."""
+        with patch("astrolabe.index.subprocess.run", side_effect=FileNotFoundError):
+            cards = scan_project("my-git-project", fake_git_project, git_config)
+        # Should still find files via rglob fallback
+        filenames = {c.filename for c in cards}
+        assert "README.md" in filenames
+
+
+class TestListFilesGit:
+    """Unit tests for _list_files_git helper."""
+
+    def test_returns_paths_for_git_repo(self, fake_git_project: Path) -> None:
+        result = _list_files_git(fake_git_project)
+        assert result is not None
+        assert len(result) > 0
+        # All should be absolute paths
+        for p in result:
+            assert p.is_absolute()
+
+    def test_returns_none_for_non_git(self, tmp_path: Path) -> None:
+        result = _list_files_git(tmp_path)
+        assert result is None
+
+    def test_returns_none_when_git_missing(self, fake_git_project: Path) -> None:
+        with patch("astrolabe.index.subprocess.run", side_effect=FileNotFoundError):
+            result = _list_files_git(fake_git_project)
+        assert result is None
+
+    def test_excludes_gitignored_files(self, fake_git_project: Path) -> None:
+        result = _list_files_git(fake_git_project)
+        assert result is not None
+        names = {p.name for p in result}
+        assert "pyvenv.cfg" not in names
+        assert "mod.cpython-311.pyc" not in names
+
+    def test_includes_untracked_non_ignored(self, fake_git_project: Path) -> None:
+        result = _list_files_git(fake_git_project)
+        assert result is not None
+        names = {p.name for p in result}
+        assert "untracked.md" in names
+
+
+class TestListFilesRglob:
+    """Unit tests for _list_files_rglob helper."""
+
+    def test_lists_all_files(self, fake_project: Path) -> None:
+        result = _list_files_rglob(fake_project)
+        assert len(result) > 0
+        for p in result:
+            assert p.is_file()
+
+    def test_excludes_symlinks(self, tmp_path: Path) -> None:
+        (tmp_path / "real.md").write_text("content")
+        (tmp_path / "link.md").symlink_to(tmp_path / "real.md")
+        result = _list_files_rglob(tmp_path)
+        names = {p.name for p in result}
+        assert "real.md" in names
+        assert "link.md" not in names

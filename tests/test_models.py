@@ -244,6 +244,27 @@ class TestIndexData:
         assert "k2::docs/arch.md" in restored.documents
 
 
+class TestProjectSummary:
+    def test_desync_count_default(self) -> None:
+        ps = ProjectSummary(
+            id="my-project",
+            doc_count=10,
+            enriched_count=8,
+            last_indexed=datetime(2026, 3, 6, tzinfo=UTC),
+        )
+        assert ps.desync_count == 0
+
+    def test_desync_count_explicit(self) -> None:
+        ps = ProjectSummary(
+            id="my-project",
+            doc_count=10,
+            enriched_count=8,
+            desync_count=3,
+            last_indexed=datetime(2026, 3, 6, tzinfo=UTC),
+        )
+        assert ps.desync_count == 3
+
+
 class TestCosmosResponse:
     def test_creation(self) -> None:
         resp = CosmosResponse(
