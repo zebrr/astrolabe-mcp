@@ -127,6 +127,7 @@ List files via `git ls-files --cached --others --exclude-standard`.
 - Returns list of absolute Paths on success
 - Returns `None` if not a git repo (non-zero returncode) or git not installed (`FileNotFoundError`)
 - Returns empty list for valid git repo with no files
+- Uses `encoding="utf-8"` explicitly (git outputs UTF-8; Windows default cp1252 breaks on non-ASCII paths)
 - Timeout: 30 seconds
 - Logs at INFO level when falling back to rglob
 

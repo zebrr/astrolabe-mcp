@@ -58,6 +58,7 @@ def _list_files_git(project_path: Path) -> list[Path] | None:
             cwd=project_path,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
         )
     except FileNotFoundError:
