@@ -47,22 +47,27 @@ class StorageBackend(Protocol):
         ...
 
 
-def create_storage(config: AppConfig) -> StorageBackend:
-    """Create storage backend based on config.
+def create_storage_at(index_dir: Path, storage_type: str) -> StorageBackend:
+    """Create storage backend for a specific directory.
 
-    If storage is "sqlite" and the .db file does not exist
-    but the .json file does, auto-migrates JSON -> SQLite.
+    Core factory used by the server for both shared and private storages.
 
     Args:
-        config: Application config with storage and index_dir fields.
+        index_dir: Directory for index files.
+        storage_type: "json" or "sqlite".
 
     Returns:
         JsonStorage or SqliteStorage instance.
-    """
-    json_path = config.index_dir / ".doc-index.json"
-    db_path = config.index_dir / ".doc-index.db"
 
-    if config.storage == "json":
+    Migration:
+        If storage_type is "sqlite" and the .db file does not exist
+        but the .json file does, auto-migrates JSON -> SQLite.
+    """
+    index_dir.mkdir(parents=True, exist_ok=True)
+    json_path = index_dir / ".doc-index.json"
+    db_path = index_dir / ".doc-index.db"
+
+    if storage_type == "json":
         from astrolabe.storage_json import JsonStorage
 
         return JsonStorage(json_path)
@@ -87,3 +92,17 @@ def create_storage(config: AppConfig) -> StorageBackend:
         logger.warning("JSON index is corrupt or empty, creating fresh SQLite storage")
 
     return SqliteStorage(db_path)
+
+
+def create_storage(config: AppConfig) -> StorageBackend:
+    """Create shared storage backend based on config.
+
+    Convenience wrapper. Delegates to create_storage_at(config.index_dir, config.storage).
+
+    Args:
+        config: Application config with storage and index_dir fields.
+
+    Returns:
+        JsonStorage or SqliteStorage instance.
+    """
+    return create_storage_at(config.index_dir, config.storage)

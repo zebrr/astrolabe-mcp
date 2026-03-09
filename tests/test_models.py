@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from astrolabe import __version__
 from astrolabe.models import (
     AppConfig,
@@ -18,14 +20,14 @@ from astrolabe.models import (
 class TestAppConfig:
     def test_basic_creation(self) -> None:
         config = AppConfig(
-            projects={"neyra": Path("/projects/neyra")},
+            projects={"my-project": Path("/projects/my-project")},
             index_dir=Path("."),
             index_extensions=[".md"],
             ignore_dirs=[".git"],
             ignore_files=["*.pyc"],
             max_file_size_kb=100,
         )
-        assert config.projects["neyra"] == Path("/projects/neyra")
+        assert config.projects["my-project"] == Path("/projects/my-project")
         assert config.max_file_size_kb == 100
 
     def test_multiple_projects(self) -> None:
@@ -44,11 +46,84 @@ class TestAppConfig:
         assert len(config.projects) == 3
         assert len(config.index_extensions) == 2
 
+    def test_backward_compat_no_private(self) -> None:
+        """Config without private fields works as before."""
+        config = AppConfig(
+            projects={"a": Path("/a")},
+            index_dir=Path("."),
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=50,
+        )
+        assert config.private_projects == {}
+        assert config.private_index_dir is None
+        assert config.all_projects == {"a": Path("/a")}
+        assert config.is_private("a") is False
+
+
+class TestAppConfigPrivate:
+    def test_all_projects_merges(self) -> None:
+        config = AppConfig(
+            projects={"shared": Path("/shared")},
+            index_dir=Path("."),
+            private_projects={"secret": Path("/secret")},
+            private_index_dir=Path("/private"),
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=50,
+        )
+        assert config.all_projects == {
+            "shared": Path("/shared"),
+            "secret": Path("/secret"),
+        }
+
+    def test_is_private(self) -> None:
+        config = AppConfig(
+            projects={"shared": Path("/shared")},
+            index_dir=Path("."),
+            private_projects={"secret": Path("/secret")},
+            private_index_dir=Path("/private"),
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=50,
+        )
+        assert config.is_private("secret") is True
+        assert config.is_private("shared") is False
+        assert config.is_private("unknown") is False
+
+    def test_private_projects_without_dir_raises(self) -> None:
+        with pytest.raises(ValueError, match="private_index_dir is required"):
+            AppConfig(
+                projects={"a": Path("/a")},
+                index_dir=Path("."),
+                private_projects={"b": Path("/b")},
+                index_extensions=[".md"],
+                ignore_dirs=[],
+                ignore_files=[],
+                max_file_size_kb=50,
+            )
+
+    def test_overlapping_keys_raises(self) -> None:
+        with pytest.raises(ValueError, match="overlapping keys"):
+            AppConfig(
+                projects={"dup": Path("/a")},
+                index_dir=Path("."),
+                private_projects={"dup": Path("/b")},
+                private_index_dir=Path("/private"),
+                index_extensions=[".md"],
+                ignore_dirs=[],
+                ignore_files=[],
+                max_file_size_kb=50,
+            )
+
 
 class TestDocCard:
     def _make_card(self, **kwargs: object) -> DocCard:
         defaults: dict[str, object] = {
-            "project": "neyra",
+            "project": "my-project",
             "filename": "README.md",
             "rel_path": "README.md",
             "size": 1200,
@@ -60,11 +135,11 @@ class TestDocCard:
 
     def test_doc_id(self) -> None:
         card = self._make_card()
-        assert card.doc_id == "neyra::README.md"
+        assert card.doc_id == "my-project::README.md"
 
     def test_doc_id_nested_path(self) -> None:
         card = self._make_card(rel_path="docs/references/Ref.md")
-        assert card.doc_id == "neyra::docs/references/Ref.md"
+        assert card.doc_id == "my-project::docs/references/Ref.md"
 
     def test_is_empty_when_not_enriched(self) -> None:
         card = self._make_card()
@@ -136,7 +211,7 @@ class TestIndexData:
 
     def test_index_with_documents(self) -> None:
         card = DocCard(
-            project="neyra",
+            project="my-project",
             filename="README.md",
             rel_path="README.md",
             size=100,
@@ -148,7 +223,7 @@ class TestIndexData:
             documents={card.doc_id: card},
         )
         assert len(index.documents) == 1
-        assert "neyra::README.md" in index.documents
+        assert "my-project::README.md" in index.documents
 
     def test_serialization_roundtrip(self) -> None:
         card = DocCard(
@@ -180,7 +255,7 @@ class TestCosmosResponse:
             empty_documents=9,
             projects=[
                 ProjectSummary(
-                    id="neyra",
+                    id="my-project",
                     doc_count=24,
                     enriched_count=20,
                     last_indexed=datetime(2026, 3, 6, tzinfo=UTC),
@@ -192,15 +267,15 @@ class TestCosmosResponse:
         )
         assert resp.total_documents == 48
         assert len(resp.projects) == 1
-        assert resp.projects[0].id == "neyra"
+        assert resp.projects[0].id == "my-project"
         assert len(resp.document_types) == 1
 
 
 class TestSearchResult:
     def test_creation(self) -> None:
         result = SearchResult(
-            doc_id="neyra::docs/ref.md",
-            project="neyra",
+            doc_id="my-project::docs/ref.md",
+            project="my-project",
             type="reference",
             filename="ref.md",
             summary="A reference",
@@ -208,7 +283,7 @@ class TestSearchResult:
             relevance=0.95,
         )
         assert result.relevance == 0.95
-        assert result.doc_id == "neyra::docs/ref.md"
+        assert result.doc_id == "my-project::docs/ref.md"
 
     def test_with_none_fields(self) -> None:
         result = SearchResult(

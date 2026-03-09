@@ -49,7 +49,10 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
     # Reset server global state
     srv._config = None
     srv._index = None
+    srv._storage = None
+    srv._private_storage = None
     srv._doc_types = {}
+    srv._doc_types_full = {}
 
     # Initialize
     srv._init()
@@ -107,7 +110,7 @@ class TestSearchDocs:
         doc_id = "test-project::README.md"
         srv.update_index_tool(
             doc_id=doc_id,
-            type="project_doc",
+            type="reference",
             summary="Main project readme with setup instructions",
             keywords=["setup", "installation"],
         )
@@ -130,7 +133,7 @@ class TestGetCard:
 
     def test_card_stale_after_content_change(self, server_env: AppConfig) -> None:
         # Enrich a card
-        srv.update_index_tool(doc_id="test-project::README.md", type="doc", summary="Test")
+        srv.update_index_tool(doc_id="test-project::README.md", type="reference", summary="Test")
         # Simulate content change by modifying enriched_content_hash
         assert srv._index is not None
         card = srv._index.documents["test-project::README.md"]
@@ -169,7 +172,7 @@ class TestUpdateIndex:
     def test_update_fields(self, server_env: AppConfig) -> None:
         result = srv.update_index_tool(
             doc_id="test-project::README.md",
-            type="project_doc",
+            type="reference",
             summary="Main readme",
             keywords=["project", "readme"],
         )
@@ -184,7 +187,7 @@ class TestUpdateIndex:
     def test_partial_update(self, server_env: AppConfig) -> None:
         srv.update_index_tool(
             doc_id="test-project::README.md",
-            type="project_doc",
+            type="reference",
             summary="Old summary",
         )
         result = srv.update_index_tool(
@@ -194,7 +197,7 @@ class TestUpdateIndex:
         assert result["updated_fields"] == ["keywords"]
         # Check type preserved
         card_result = srv.get_card(doc_id="test-project::README.md")
-        assert card_result["type"] == "project_doc"
+        assert card_result["type"] == "reference"
 
 
 class TestReindex:
@@ -215,6 +218,243 @@ class TestReindex:
     def test_reindex_nonexistent_project(self, server_env: AppConfig) -> None:
         result = srv.reindex_tool(project="ghost")
         assert "error" in result
+
+
+class TestGetDocTypes:
+    def test_returns_full_vocabulary(self, server_env: AppConfig) -> None:
+        result = srv.get_doc_types()
+        assert "reference" in result
+        assert "instruction" in result
+        assert result["reference"]["description"] == "Reference material"
+
+    def test_empty_when_no_yaml(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_file = tmp_path / "config.json"
+        config_data = {
+            "projects": {"test-project": str(fake_project)},
+            "index_dir": str(tmp_path / "no-yaml-here"),
+            "index_extensions": [".md"],
+            "ignore_dirs": [".git"],
+            "ignore_files": [],
+            "max_file_size_kb": 100,
+        }
+        (tmp_path / "no-yaml-here").mkdir()
+        config_file.write_text(json.dumps(config_data))
+        monkeypatch.setenv("ASTROLABE_CONFIG", str(config_file))
+        srv._config = None
+        srv._index = None
+        srv._doc_types = {}
+        srv._doc_types_full = {}
+        srv._init()
+
+        result = srv.get_doc_types()
+        assert result == {}
+
+
+class TestTypeValidation:
+    def test_rejects_unknown_type(self, server_env: AppConfig) -> None:
+        result = srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="invented_type",
+        )
+        assert "error" in result
+        assert "Unknown type" in result["error"]
+        assert "Available types" in result["error"]
+
+    def test_accepts_valid_type(self, server_env: AppConfig) -> None:
+        result = srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="reference",
+            summary="Test summary",
+        )
+        assert result["status"] == "updated"
+
+    def test_no_validation_without_doc_types(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When doc_types.yaml is missing, any type is accepted."""
+        config_file = tmp_path / "config.json"
+        config_data = {
+            "projects": {"test-project": str(fake_project)},
+            "index_dir": str(tmp_path / "no-yaml"),
+            "index_extensions": [".md"],
+            "ignore_dirs": [".git"],
+            "ignore_files": [],
+            "max_file_size_kb": 100,
+        }
+        (tmp_path / "no-yaml").mkdir()
+        config_file.write_text(json.dumps(config_data))
+        monkeypatch.setenv("ASTROLABE_CONFIG", str(config_file))
+        srv._config = None
+        srv._index = None
+        srv._doc_types = {}
+        srv._doc_types_full = {}
+        srv._init()
+
+        result = srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="any_type_works",
+            summary="No validation",
+        )
+        assert result["status"] == "updated"
+
+
+class TestPrivateIndex:
+    """Tests for private index: dual storage, routing, merge."""
+
+    @pytest.fixture
+    def private_env(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[AppConfig, Path]:
+        """Set up server with both shared and private projects."""
+        # Create private project
+        private_proj = tmp_path / "private-proj"
+        private_proj.mkdir()
+        (private_proj / "secret.md").write_text("# Secret\n\nPrivate content.")
+        (private_proj / "notes.md").write_text("# Notes\n\nPrivate notes.")
+
+        shared_dir = tmp_path / "shared-idx"
+        private_dir = tmp_path / "private-idx"
+        shared_dir.mkdir()
+        private_dir.mkdir()
+
+        config_file = tmp_path / "config.json"
+        config_data = {
+            "projects": {"test-project": str(fake_project)},
+            "index_dir": str(shared_dir),
+            "private_projects": {"private-proj": str(private_proj)},
+            "private_index_dir": str(private_dir),
+            "index_extensions": [".md", ".yaml", ".yml", ".txt"],
+            "ignore_dirs": [".git", ".venv", "src", "node_modules", "__pycache__"],
+            "ignore_files": ["*.pyc", "*.lock"],
+            "max_file_size_kb": 100,
+        }
+        config_file.write_text(json.dumps(config_data))
+
+        doc_types_file = shared_dir / "doc_types.yaml"
+        doc_types_file.write_text(
+            "document_types:\n"
+            "  reference:\n"
+            "    description: Reference material\n"
+            "  instruction:\n"
+            "    description: Project instruction\n"
+        )
+
+        monkeypatch.setenv("ASTROLABE_CONFIG", str(config_file))
+        srv._config = None
+        srv._index = None
+        srv._storage = None
+        srv._private_storage = None
+        srv._doc_types = {}
+        srv._doc_types_full = {}
+        srv._init()
+
+        assert srv._config is not None
+        return srv._config, private_proj
+
+    def test_unified_index_has_both(self, private_env: tuple[AppConfig, Path]) -> None:
+        """_index contains cards from both shared and private projects."""
+        assert srv._index is not None
+        projects = {c.project for c in srv._index.documents.values()}
+        assert "test-project" in projects
+        assert "private-proj" in projects
+
+    def test_cosmos_shows_all_projects(self, private_env: tuple[AppConfig, Path]) -> None:
+        result = srv.get_cosmos()
+        project_ids = [p["id"] for p in result["projects"]]
+        assert "test-project" in project_ids
+        assert "private-proj" in project_ids
+
+    def test_list_docs_includes_private(self, private_env: tuple[AppConfig, Path]) -> None:
+        result = srv.list_docs(project="private-proj")
+        assert len(result) == 2
+        filenames = {r["filename"] for r in result}
+        assert "secret.md" in filenames
+        assert "notes.md" in filenames
+
+    def test_search_finds_private(self, private_env: tuple[AppConfig, Path]) -> None:
+        # Enrich a private card
+        srv.update_index_tool(
+            doc_id="private-proj::secret.md",
+            type="reference",
+            summary="Secret document with private content",
+            keywords=["secret", "private"],
+        )
+        result = srv.search_docs(query="secret private")
+        assert len(result) >= 1
+        assert any(r["doc_id"] == "private-proj::secret.md" for r in result)
+
+    def test_read_doc_private(self, private_env: tuple[AppConfig, Path]) -> None:
+        result = srv.read_doc(doc_id="private-proj::secret.md")
+        assert "content" in result
+        assert "Private content" in result["content"]
+
+    def test_update_routes_to_private_storage(self, private_env: tuple[AppConfig, Path]) -> None:
+        """Enriching a private card saves to private storage, not shared."""
+        srv.update_index_tool(
+            doc_id="private-proj::secret.md",
+            type="reference",
+            summary="A secret doc",
+        )
+
+        # Verify private storage has the card
+        assert srv._private_storage is not None
+        private_data = srv._private_storage.load()
+        assert private_data is not None
+        assert "private-proj::secret.md" in private_data.documents
+        assert private_data.documents["private-proj::secret.md"].type == "reference"
+
+        # Verify shared storage does NOT have the private card
+        assert srv._storage is not None
+        shared_data = srv._storage.load()
+        assert shared_data is not None
+        assert "private-proj::secret.md" not in shared_data.documents
+
+    def test_update_routes_to_shared_storage(self, private_env: tuple[AppConfig, Path]) -> None:
+        """Enriching a shared card saves to shared storage."""
+        srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="reference",
+            summary="Main readme",
+        )
+
+        assert srv._storage is not None
+        shared_data = srv._storage.load()
+        assert shared_data is not None
+        assert "test-project::README.md" in shared_data.documents
+
+    def test_reindex_preserves_split(self, private_env: tuple[AppConfig, Path]) -> None:
+        """After reindex, shared and private cards go to correct storages."""
+        srv.reindex_tool()
+
+        assert srv._storage is not None
+        assert srv._private_storage is not None
+
+        shared_data = srv._storage.load()
+        private_data = srv._private_storage.load()
+
+        assert shared_data is not None
+        assert private_data is not None
+
+        shared_projects = {c.project for c in shared_data.documents.values()}
+        private_projects = {c.project for c in private_data.documents.values()}
+
+        assert "test-project" in shared_projects
+        assert "private-proj" not in shared_projects
+        assert "private-proj" in private_projects
+
+    def test_reindex_single_private_project(self, private_env: tuple[AppConfig, Path]) -> None:
+        _, private_proj = private_env
+        result = srv.reindex_tool(project="private-proj")
+        assert "error" not in result
+        assert result["unchanged"] == 2
+
+    def test_backward_compat_no_private(self, server_env: AppConfig) -> None:
+        """Without private config, behavior is identical to v0.3.1."""
+        assert srv._private_storage is None
+        result = srv.get_cosmos()
+        assert len(result["projects"]) == 1
 
 
 class TestDocTypesLookup:
@@ -256,6 +496,7 @@ class TestDocTypesLookup:
         srv._config = None
         srv._index = None
         srv._doc_types = {}
+        srv._doc_types_full = {}
         srv._init()
 
     def test_loads_from_index_parent(

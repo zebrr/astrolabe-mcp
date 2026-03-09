@@ -14,19 +14,33 @@ Application configuration loaded from `config.json`.
 
 ```python
 class AppConfig(BaseModel):
-    projects: dict[str, Path]          # name → absolute path
-    index_dir: Path                    # directory for index files (relative to config dir)
+    projects: dict[str, Path]          # name → absolute path (shared projects)
+    index_dir: Path                    # directory for shared index files (relative to config dir)
     storage: Literal["json", "sqlite"] = "json"  # storage backend
     index_extensions: list[str]        # e.g. [".md", ".yaml"]
     ignore_dirs: list[str]             # directory names to skip
     ignore_files: list[str]            # glob patterns for files to skip
     max_file_size_kb: int              # max file size for full read (without section/range)
+
+    # Private index (optional)
+    private_projects: dict[str, Path] = {}    # name → absolute path (private projects)
+    private_index_dir: Path | None = None     # directory for private index files
 ```
 
-- `projects`: keys are project IDs used in doc_id, values are absolute paths
+- `projects`: keys are project IDs used in doc_id, values are absolute paths (shared, cloud-synced)
+- `private_projects`: same format, but stored in local-only private index
 - Non-existent project paths are kept in config but skipped at scan time (not at load time)
 - `index_dir`: resolved relative to config file directory. Server places `.doc-index.json` or `.doc-index.db` inside.
-- `storage`: `"json"` (default) uses `.doc-index.json`, `"sqlite"` uses `.doc-index.db`
+- `private_index_dir`: resolved relative to config file directory. Same file naming as `index_dir`. `None` if no private projects.
+- `storage`: `"json"` (default) uses `.doc-index.json`, `"sqlite"` uses `.doc-index.db`. Applies to both shared and private storages.
+
+Validations:
+- If `private_projects` is non-empty and `private_index_dir` is `None` → `ValueError`
+- If keys of `projects` and `private_projects` overlap → `ValueError`
+
+Computed properties:
+- `all_projects: dict[str, Path]` — `{**projects, **private_projects}`. Used everywhere the server needs the full project set.
+- `is_private(project_id: str) -> bool` — `project_id in private_projects`. Used to route saves to the correct storage.
 
 ### DocCard
 
@@ -140,14 +154,14 @@ config = AppConfig.model_validate(json.loads(config_path.read_text()))
 
 # Create a doc card
 card = DocCard(
-    project="neyra",
+    project="my-project",
     filename="README.md",
     rel_path="README.md",
     size=1200,
     modified=datetime(2026, 3, 6),
     content_hash="abc123",
 )
-assert card.doc_id == "neyra::README.md"
+assert card.doc_id == "my-project::README.md"
 assert card.is_empty is True
 
 # Enrich

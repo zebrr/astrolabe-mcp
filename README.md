@@ -214,12 +214,13 @@ Exact token matches get a 1.5x bonus. Results are sorted by relevance score.
 
 | Tool | Description |
 |------|-------------|
+| `get_doc_types()` | Document type vocabulary from doc_types.yaml (descriptions + examples) |
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
 | `list_docs(project?, type?, stale?)` | List document cards with filters |
 | `search_docs(query, project?, type?)` | Search by query with relevance ranking |
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
-| `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card |
+| `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card (type validated against doc_types.yaml) |
 | `reindex_tool(project?, mode?)` | Rescan filesystem. `mode`: `update` (default) / `clean` (remove missing) / `rebuild` (reset all) |
 
 **doc_id format:** `project::rel_path` — e.g., `web-app::docs/API.md`.
@@ -240,6 +241,32 @@ Astrolabe supports sharing a single index across machines (e.g., Windows + Mac) 
 - **Stale detection** — hash-based: if `content_hash` differs from `enriched_content_hash`, the card is stale and needs re-enrichment. Reliable across machines (no timestamp dependency)
 - **Shared doc_types** — `doc_types.yaml` is loaded from next to the index file first, then next to the config file. When using a cloud index, place `doc_types.yaml` in the same cloud folder to share document type definitions across machines
 - **Reindex modes** — `reindex_tool(mode="clean")` removes cards for deleted/moved files while preserving enrichment. `reindex_tool(mode="rebuild")` resets all enrichment (nuclear option). Pass-through cards from other machines are always preserved
+
+## Private Index
+
+Some projects shouldn't be visible in the shared cloud index (personal notes, private repos). Astrolabe supports a separate private storage alongside the shared one.
+
+Add to `runtime/config.json`:
+
+```json
+{
+  "projects": {
+    "shared-project": "/path/to/shared"
+  },
+  "private_projects": {
+    "my-notes": "/path/to/my-notes"
+  },
+  "private_index_dir": "../private-index"
+}
+```
+
+**How it works:**
+- `private_projects` are indexed separately in `private_index_dir` (local, not cloud-synced)
+- The server merges both indexes in memory — all tools work transparently across shared and private documents
+- `update_index_tool()` routes saves to the correct storage based on project
+- `reindex_tool()` splits results to the correct storage
+- One shared `doc_types.yaml` — the team agrees on types, private projects use the same vocabulary
+- Without `private_projects`/`private_index_dir`, behavior is identical to before
 
 ## Current Limitations
 

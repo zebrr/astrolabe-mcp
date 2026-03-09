@@ -61,34 +61,53 @@ class StorageBackend(Protocol):
         ...
 ```
 
-## Factory Function
+## Factory Functions
+
+### `create_storage_at(index_dir, storage_type) -> StorageBackend`
+
+Core factory. Creates a storage backend for a given directory. Creates `index_dir` if it does not exist (`mkdir -p`).
 
 ```python
-def create_storage(config: AppConfig) -> StorageBackend:
-    """Create storage backend based on config.
+def create_storage_at(index_dir: Path, storage_type: str) -> StorageBackend:
+    """Create storage backend for a specific directory.
 
     Args:
-        config: Application config with storage and index_dir fields.
+        index_dir: Directory for index files.
+        storage_type: "json" or "sqlite".
 
     Returns:
         JsonStorage or SqliteStorage instance.
 
     Migration:
-        If storage is "sqlite" and the .db file does not exist
+        If storage_type is "sqlite" and the .db file does not exist
         but the .json file does, auto-migrates JSON -> SQLite.
+    """
+```
+
+Used directly by the server to create both shared and private storages.
+
+### `create_storage(config) -> StorageBackend`
+
+Convenience wrapper for backward compatibility.
+
+```python
+def create_storage(config: AppConfig) -> StorageBackend:
+    """Create shared storage backend based on config.
+
+    Delegates to create_storage_at(config.index_dir, config.storage).
     """
 ```
 
 ### Path resolution
 
-- `config.index_dir` is a directory. Server constructs filenames:
-  - `config.storage == "json"`: `config.index_dir / ".doc-index.json"`
-  - `config.storage == "sqlite"`: `config.index_dir / ".doc-index.db"`
+- `index_dir` is a directory. Factory constructs filenames:
+  - `storage_type == "json"`: `index_dir / ".doc-index.json"`
+  - `storage_type == "sqlite"`: `index_dir / ".doc-index.db"`
 
-### Migration logic (in factory)
+### Migration logic (in `create_storage_at`)
 
-When `storage == "sqlite"`:
-1. `json_path = config.index_dir / ".doc-index.json"`, `db_path = config.index_dir / ".doc-index.db"`
+When `storage_type == "sqlite"`:
+1. `json_path = index_dir / ".doc-index.json"`, `db_path = index_dir / ".doc-index.db"`
 2. If `db_path` does not exist but `json_path` does:
    - Load JSON index via `load_index(json_path)`
    - Create SqliteStorage at `db_path`

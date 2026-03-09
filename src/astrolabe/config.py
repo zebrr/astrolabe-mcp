@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -28,17 +29,22 @@ def load_config(config_path: Path) -> AppConfig:
     if not config.index_dir.is_absolute():
         config.index_dir = config_path.parent / config.index_dir
 
+    # Resolve private_index_dir relative to config file directory
+    if config.private_index_dir is not None and not config.private_index_dir.is_absolute():
+        config.private_index_dir = config_path.parent / config.private_index_dir
+
     return config
 
 
-def load_doc_types(doc_types_path: Path) -> dict[str, str]:
-    """Load doc_types.yaml and return type_name → description mapping.
+def load_doc_types_full(doc_types_path: Path) -> dict[str, dict[str, Any]]:
+    """Load doc_types.yaml and return full structure for each document type.
 
     Args:
         doc_types_path: Absolute path to doc_types.yaml.
 
     Returns:
-        Dict mapping type names to descriptions. Empty dict if file missing.
+        Dict mapping type names to their full definitions (description, examples, etc.).
+        Empty dict if file missing.
 
     Raises:
         yaml.YAMLError: If file exists but is malformed YAML.
@@ -50,8 +56,29 @@ def load_doc_types(doc_types_path: Path) -> dict[str, str]:
     if not isinstance(raw, dict) or "document_types" not in raw:
         return {}
 
-    result: dict[str, str] = {}
+    result: dict[str, dict[str, Any]] = {}
     for type_name, type_def in raw["document_types"].items():
         if isinstance(type_def, dict) and "description" in type_def:
-            result[type_name] = type_def["description"].strip()
+            entry: dict[str, Any] = {"description": type_def["description"].strip()}
+            if "examples" in type_def:
+                entry["examples"] = type_def["examples"]
+            result[type_name] = entry
     return result
+
+
+def load_doc_types(doc_types_path: Path) -> dict[str, str]:
+    """Load doc_types.yaml and return type_name → description mapping.
+
+    Convenience wrapper over load_doc_types_full().
+
+    Args:
+        doc_types_path: Absolute path to doc_types.yaml.
+
+    Returns:
+        Dict mapping type names to descriptions. Empty dict if file missing.
+
+    Raises:
+        yaml.YAMLError: If file exists but is malformed YAML.
+    """
+    full = load_doc_types_full(doc_types_path)
+    return {name: entry["description"] for name, entry in full.items()}

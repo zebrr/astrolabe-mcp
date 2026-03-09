@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from astrolabe import __version__
 
@@ -19,6 +19,30 @@ class AppConfig(BaseModel):
     ignore_dirs: list[str]
     ignore_files: list[str]
     max_file_size_kb: int
+
+    # Private index (optional)
+    private_projects: dict[str, Path] = {}
+    private_index_dir: Path | None = None
+
+    @model_validator(mode="after")
+    def _validate_private(self) -> "AppConfig":
+        if self.private_projects and self.private_index_dir is None:
+            msg = "private_index_dir is required when private_projects is set"
+            raise ValueError(msg)
+        overlap = set(self.projects) & set(self.private_projects)
+        if overlap:
+            msg = f"projects and private_projects have overlapping keys: {sorted(overlap)}"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def all_projects(self) -> dict[str, Path]:
+        """Merge of projects and private_projects."""
+        return {**self.projects, **self.private_projects}
+
+    def is_private(self, project_id: str) -> bool:
+        """Check if a project is private."""
+        return project_id in self.private_projects
 
 
 class DocCard(BaseModel):

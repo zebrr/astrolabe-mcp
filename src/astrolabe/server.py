@@ -4,17 +4,17 @@ import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
 
 from astrolabe import __version__
-from astrolabe.config import load_config, load_doc_types
+from astrolabe.config import load_config, load_doc_types_full
 from astrolabe.index import build_index, reindex, update_card
 from astrolabe.models import AppConfig, CosmosResponse, IndexData, ProjectSummary, TypeSummary
 from astrolabe.reader import read_file
 from astrolabe.search import search
-from astrolabe.storage import StorageBackend, create_storage
+from astrolabe.storage import StorageBackend, create_storage, create_storage_at
 
 logger = logging.getLogger(__name__)
 
@@ -24,40 +24,119 @@ mcp = FastMCP("astrolabe")
 _config: AppConfig | None = None
 _index: IndexData | None = None
 _storage: StorageBackend | None = None
+_private_storage: StorageBackend | None = None
+_doc_types_full: dict[str, dict[str, Any]] = {}
 _doc_types: dict[str, str] = {}
 
 
-def _load_doc_types(config: AppConfig, config_path: Path) -> dict[str, str]:
-    """Load doc_types.yaml from index dir or config dir."""
+def _load_all_doc_types(config: AppConfig, config_path: Path) -> None:
+    """Load doc_types.yaml from index dir or config dir into global state."""
+    global _doc_types_full, _doc_types
     index_types_path = config.index_dir / "doc_types.yaml"
     config_types_path = config_path.parent / "doc_types.yaml"
+
     if index_types_path.exists():
-        return load_doc_types(index_types_path)
-    if config_types_path.exists():
-        return load_doc_types(config_types_path)
-    return {}
+        _doc_types_full = load_doc_types_full(index_types_path)
+    elif config_types_path.exists():
+        _doc_types_full = load_doc_types_full(config_types_path)
+    else:
+        _doc_types_full = {}
+
+    _doc_types = {name: entry["description"] for name, entry in _doc_types_full.items()}
+
+
+def _full_scan_config(config: AppConfig) -> AppConfig:
+    """Create a config with all_projects for filesystem scanning."""
+    if not config.private_projects:
+        return config
+    return AppConfig(
+        projects=config.all_projects,
+        index_dir=config.index_dir,
+        storage=config.storage,
+        index_extensions=config.index_extensions,
+        ignore_dirs=config.ignore_dirs,
+        ignore_files=config.ignore_files,
+        max_file_size_kb=config.max_file_size_kb,
+    )
+
+
+def _save_index() -> None:
+    """Split _index into shared/private and save to corresponding storages."""
+    assert _config is not None
+    assert _index is not None
+    assert _storage is not None
+
+    if _private_storage is None:
+        # No private config — save everything to shared storage
+        _storage.save(_index)
+        return
+
+    shared_docs = {}
+    private_docs = {}
+    for doc_id, card in _index.documents.items():
+        if _config.is_private(card.project):
+            private_docs[doc_id] = card
+        else:
+            shared_docs[doc_id] = card
+
+    shared_index = IndexData(indexed_at=_index.indexed_at, documents=shared_docs)
+    private_index = IndexData(indexed_at=_index.indexed_at, documents=private_docs)
+
+    _storage.save(shared_index)
+    _private_storage.save(private_index)
+
+
+def _get_storage_for_project(project: str) -> StorageBackend:
+    """Return the correct storage backend for a project."""
+    assert _config is not None
+    assert _storage is not None
+    if _private_storage is not None and _config.is_private(project):
+        return _private_storage
+    return _storage
 
 
 def _init() -> tuple[AppConfig, IndexData]:
     """Initialize config and index. Called on startup."""
-    global _config, _index, _storage, _doc_types
+    global _config, _index, _storage, _private_storage
 
     config_path_str = os.environ.get("ASTROLABE_CONFIG", "runtime/config.json")
     config_path = Path(config_path_str).resolve()
 
     _config = load_config(config_path)
-    _doc_types = _load_doc_types(_config, config_path)
+    _load_all_doc_types(_config, config_path)
 
+    # Create shared storage
     _storage = create_storage(_config)
-    existing = _storage.load()
-    if existing is not None:
-        _index, stats = reindex(_config, existing)
+
+    # Create private storage if configured
+    if _config.private_index_dir is not None:
+        _private_storage = create_storage_at(_config.private_index_dir, _config.storage)
+    else:
+        _private_storage = None
+
+    # Load and merge indexes from both storages
+    shared_data = _storage.load()
+    private_data = _private_storage.load() if _private_storage is not None else None
+
+    # Merge existing documents
+    existing_docs: dict[str, Any] = {}
+    indexed_at = datetime.now(UTC)
+    if shared_data is not None:
+        existing_docs.update(shared_data.documents)
+        indexed_at = shared_data.indexed_at
+    if private_data is not None:
+        existing_docs.update(private_data.documents)
+
+    scan_config = _full_scan_config(_config)
+    if existing_docs:
+        existing = IndexData(indexed_at=indexed_at, documents=existing_docs)
+        _index, stats = reindex(scan_config, existing)
         logger.info("Reindex on startup: %s", stats)
     else:
-        _index = build_index(_config)
+        _index = build_index(scan_config)
         logger.info("Built fresh index: %d documents", len(_index.documents))
 
-    _storage.save(_index)
+    _save_index()
     return _config, _index
 
 
@@ -67,6 +146,17 @@ def _get_state() -> tuple[AppConfig, IndexData]:
     if _config is None or _index is None:
         return _init()
     return _config, _index
+
+
+@mcp.tool()
+def get_doc_types() -> dict[str, dict[str, Any]]:
+    """Get the document type vocabulary from doc_types.yaml.
+
+    Returns all document types with descriptions and examples.
+    Use this to know which types are available before enriching cards.
+    """
+    _get_state()  # ensure initialized
+    return _doc_types_full
 
 
 @mcp.tool()
@@ -81,7 +171,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
 
     # Per-project stats
     project_stats: dict[str, dict[str, int]] = {}
-    for pid in config.projects:
+    for pid in config.all_projects:
         project_stats[pid] = {"doc_count": 0, "enriched_count": 0}
 
     total = len(index.documents)
@@ -98,8 +188,8 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
                 project_stats[card.project]["enriched_count"] += 1
 
             # Desync: file missing on disk (deleted or not synced from another machine)
-            if card.project in config.projects:
-                file_path = config.projects[card.project] / card.rel_path
+            if card.project in config.all_projects:
+                file_path = config.all_projects[card.project] / card.rel_path
                 if not file_path.exists():
                     desync += 1
 
@@ -261,7 +351,7 @@ def read_doc(
         return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
 
     card = index.documents[doc_id]
-    project_path = config.projects.get(card.project)
+    project_path = config.all_projects.get(card.project)
     if project_path is None:
         return {"error": f"Project not found in config: {card.project}"}
 
@@ -321,6 +411,14 @@ def update_index_tool(
     """
     _, index = _get_state()
 
+    # Validate type against doc_types vocabulary
+    if type is not None and _doc_types and type not in _doc_types:
+        available = sorted(_doc_types.keys())
+        return {
+            "error": f"Unknown type '{type}'. Available types: {available}",
+            "hint": "Use get_doc_types() to see the full vocabulary with descriptions.",
+        }
+
     try:
         card = update_card(
             index, doc_id, type=type, summary=summary, keywords=keywords, headings=headings
@@ -328,8 +426,8 @@ def update_index_tool(
     except KeyError:
         return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
 
-    if _storage is not None:
-        _storage.save_card(card, index.indexed_at)
+    storage = _get_storage_for_project(card.project)
+    storage.save_card(card, index.indexed_at)
 
     updated_fields = []
     if type is not None:
@@ -366,7 +464,7 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         project: Rescan only this project (optional).
         mode: Reindex mode — "update", "clean", or "rebuild" (default "update").
     """
-    global _config, _index, _storage, _doc_types
+    global _config, _index, _storage, _private_storage
     if mode not in ("update", "clean", "rebuild"):
         return {"error": f"Invalid mode: {mode}. Use 'update', 'clean', or 'rebuild'."}
     reindex_mode = cast(Literal["update", "clean", "rebuild"], mode)
@@ -375,23 +473,41 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
     config_path_str = os.environ.get("ASTROLABE_CONFIG", "runtime/config.json")
     config_path = Path(config_path_str).resolve()
     _config = load_config(config_path)
-    _doc_types = _load_doc_types(_config, config_path)
+    _load_all_doc_types(_config, config_path)
 
-    # Recreate storage in case config.storage changed
+    # Recreate both storages in case config changed
     _storage = create_storage(_config)
+    if _config.private_index_dir is not None:
+        _private_storage = create_storage_at(_config.private_index_dir, _config.storage)
+    else:
+        _private_storage = None
+
     config = _config
     if _index is None:
-        _index = _storage.load() or build_index(config)
+        # Load and merge from both storages
+        shared_data = _storage.load()
+        private_data = _private_storage.load() if _private_storage is not None else None
+        existing_docs: dict[str, Any] = {}
+        indexed_at = datetime.now(UTC)
+        if shared_data is not None:
+            existing_docs.update(shared_data.documents)
+            indexed_at = shared_data.indexed_at
+        if private_data is not None:
+            existing_docs.update(private_data.documents)
+        if existing_docs:
+            _index = IndexData(indexed_at=indexed_at, documents=existing_docs)
+        else:
+            _index = build_index(config)
     index = _index
 
     start = datetime.now(UTC)
 
     if project is not None:
         # Build a temporary config with just this project
-        if project not in config.projects:
+        if project not in config.all_projects:
             return {"error": f"Project not found: {project}"}
         single_config = AppConfig(
-            projects={project: config.projects[project]},
+            projects={project: config.all_projects[project]},
             index_dir=config.index_dir,
             storage=config.storage,
             index_extensions=config.index_extensions,
@@ -414,9 +530,10 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         merged_docs = {**other_cards, **new_project_index.documents}
         _index = IndexData(indexed_at=new_project_index.indexed_at, documents=merged_docs)
     else:
-        _index, stats = reindex(config, index, mode=reindex_mode)
+        # Full reindex uses all_projects
+        _index, stats = reindex(_full_scan_config(config), index, mode=reindex_mode)
 
-    _storage.save(_index)
+    _save_index()
 
     duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 

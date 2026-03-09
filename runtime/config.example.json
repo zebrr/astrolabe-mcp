@@ -7,6 +7,9 @@
   "storage": "json",
   "_storage_note": "\"json\" (default) or \"sqlite\". SQLite uses single-row upserts for enrichment — much faster for large indexes. Switching to sqlite auto-migrates existing JSON index.",
   "_index_dir_note": "Directory for index files (.doc-index.json or .doc-index.db). For cross-platform sync, use absolute path to cloud folder, e.g. G:/My Drive/astrolabe (Win) or /Volumes/GoogleDrive/My Drive/astrolabe (Mac)",
+  "_private_note": "Optional: private_projects are stored in private_index_dir (local, not cloud-synced). Remove these lines if not needed.",
+  "private_projects": {},
+  "private_index_dir": null,
   "index_extensions": [
     ".md", ".yaml", ".yml", ".txt", ".py", ".sh",
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",

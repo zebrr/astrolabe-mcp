@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from astrolabe.config import load_config, load_doc_types
+from astrolabe.config import load_config, load_doc_types, load_doc_types_full
 
 
 class TestLoadConfig:
@@ -87,6 +87,65 @@ class TestLoadConfig:
             assert ".md" in config.index_extensions
 
 
+class TestLoadConfigPrivate:
+    def test_private_index_dir_resolved_relative(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "subdir" / "config.json"
+        config_file.parent.mkdir()
+        config_file.write_text(
+            json.dumps(
+                {
+                    "projects": {"shared": str(tmp_path / "shared")},
+                    "index_dir": ".",
+                    "private_projects": {"secret": str(tmp_path / "secret")},
+                    "private_index_dir": "private-idx",
+                    "index_extensions": [".md"],
+                    "ignore_dirs": [],
+                    "ignore_files": [],
+                    "max_file_size_kb": 50,
+                }
+            )
+        )
+        config = load_config(config_file)
+        assert config.private_index_dir == tmp_path / "subdir" / "private-idx"
+
+    def test_absolute_private_index_dir_unchanged(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "projects": {"shared": str(tmp_path / "shared")},
+                    "index_dir": ".",
+                    "private_projects": {"secret": str(tmp_path / "secret")},
+                    "private_index_dir": "/absolute/path",
+                    "index_extensions": [".md"],
+                    "ignore_dirs": [],
+                    "ignore_files": [],
+                    "max_file_size_kb": 50,
+                }
+            )
+        )
+        config = load_config(config_file)
+        assert config.private_index_dir == Path("/absolute/path")
+
+    def test_no_private_fields_backward_compat(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "projects": {"a": str(tmp_path)},
+                    "index_dir": ".",
+                    "index_extensions": [".md"],
+                    "ignore_dirs": [],
+                    "ignore_files": [],
+                    "max_file_size_kb": 50,
+                }
+            )
+        )
+        config = load_config(config_file)
+        assert config.private_projects == {}
+        assert config.private_index_dir is None
+
+
 class TestLoadDocTypes:
     def test_loads_valid_doc_types(self, tmp_path: Path) -> None:
         dt_file = tmp_path / "doc_types.yaml"
@@ -141,3 +200,55 @@ class TestLoadDocTypes:
             assert "instruction" in result
             assert "reference" in result
             assert len(result) >= 5
+
+
+class TestLoadDocTypesFull:
+    def test_returns_full_structure(self, tmp_path: Path) -> None:
+        dt_file = tmp_path / "doc_types.yaml"
+        dt_file.write_text(
+            "document_types:\n"
+            "  instruction:\n"
+            "    description: Project instruction\n"
+            "    examples:\n"
+            "      - CLAUDE.md\n"
+            "      - PROJECT.md\n"
+            "  reference:\n"
+            "    description: Reference material\n"
+        )
+
+        result = load_doc_types_full(dt_file)
+        assert result["instruction"]["description"] == "Project instruction"
+        assert result["instruction"]["examples"] == ["CLAUDE.md", "PROJECT.md"]
+        assert result["reference"]["description"] == "Reference material"
+        assert "examples" not in result["reference"]
+
+    def test_missing_file_returns_empty(self, tmp_path: Path) -> None:
+        result = load_doc_types_full(tmp_path / "missing.yaml")
+        assert result == {}
+
+    def test_missing_examples_omitted(self, tmp_path: Path) -> None:
+        dt_file = tmp_path / "doc_types.yaml"
+        dt_file.write_text("document_types:\n  spec:\n    description: Technical specification\n")
+
+        result = load_doc_types_full(dt_file)
+        assert "examples" not in result["spec"]
+        assert result["spec"]["description"] == "Technical specification"
+
+    def test_load_doc_types_is_consistent_wrapper(self, tmp_path: Path) -> None:
+        """load_doc_types returns descriptions extracted from load_doc_types_full."""
+        dt_file = tmp_path / "doc_types.yaml"
+        dt_file.write_text(
+            "document_types:\n"
+            "  instruction:\n"
+            "    description: Project instruction\n"
+            "    examples:\n"
+            "      - CLAUDE.md\n"
+            "  reference:\n"
+            "    description: Reference material\n"
+        )
+
+        full = load_doc_types_full(dt_file)
+        flat = load_doc_types(dt_file)
+
+        for name, entry in full.items():
+            assert flat[name] == entry["description"]

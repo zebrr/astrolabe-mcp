@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from astrolabe.models import AppConfig, DocCard, IndexData
-from astrolabe.storage import StorageBackend, create_storage
+from astrolabe.storage import StorageBackend, create_storage, create_storage_at
 from astrolabe.storage_json import JsonStorage
 from astrolabe.storage_sqlite import SqliteStorage
 
@@ -289,6 +289,48 @@ class TestCreateStorageFactory:
         assert loaded is not None
         assert "proj::from-sqlite.md" in loaded.documents
         assert "proj::from-json.md" not in loaded.documents
+
+
+class TestCreateStorageAt:
+    """create_storage_at() creates correct backends for arbitrary directories."""
+
+    def test_json_at_custom_dir(self, tmp_path: Path) -> None:
+        custom = tmp_path / "custom"
+        custom.mkdir()
+        s = create_storage_at(custom, "json")
+        assert isinstance(s, JsonStorage)
+        assert s.path == custom / ".doc-index.json"
+
+    def test_sqlite_at_custom_dir(self, tmp_path: Path) -> None:
+        custom = tmp_path / "custom"
+        custom.mkdir()
+        s = create_storage_at(custom, "sqlite")
+        assert isinstance(s, SqliteStorage)
+        assert s.path == custom / ".doc-index.db"
+
+    def test_two_independent_storages(self, tmp_path: Path) -> None:
+        """Two storages in different dirs are independent."""
+        dir_a = tmp_path / "shared"
+        dir_b = tmp_path / "private"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        s_a = create_storage_at(dir_a, "json")
+        s_b = create_storage_at(dir_b, "json")
+
+        card_a = _make_card("proj_a", "a.md")
+        card_b = _make_card("proj_b", "b.md")
+
+        s_a.save(_make_index([card_a]))
+        s_b.save(_make_index([card_b]))
+
+        loaded_a = s_a.load()
+        loaded_b = s_b.load()
+        assert loaded_a is not None
+        assert loaded_b is not None
+        assert "proj_a::a.md" in loaded_a.documents
+        assert "proj_b::b.md" in loaded_b.documents
+        assert "proj_b::b.md" not in loaded_a.documents
 
 
 class TestSqliteSpecific:
