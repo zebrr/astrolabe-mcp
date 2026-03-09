@@ -49,7 +49,7 @@ astrolabe-mcp/
 | config.py | done | spec_config.md | Load config.json + doc_types.yaml, resolve private_index_dir |
 | index.py | done | spec_index.md | Core: scan projects, build/load/save index, hash, stale detection |
 | reader.py | done | spec_reader.md | Read files: full, by section heading, by line range |
-| search.py | done | spec_search.md | Token matching with field weights over enriched cards |
+| search.py | done | spec_search.md | Bilingual stem matching (EN+RU) with field weights over enriched cards |
 | storage.py | done | spec_storage.md | StorageBackend Protocol + create_storage() factory |
 | storage_json.py | done | spec_storage.md | JSON file backend (wraps index.py load/save) |
 | storage_sqlite.py | done | spec_storage.md | SQLite backend (single-row upserts, cloud-safe) |
@@ -78,7 +78,7 @@ See `docs/CONCEPT.md` for full tool specifications.
 - SQLite: single-row upserts for enrichment (vs full-file rewrite in JSON)
 - `ignore_dirs` / `ignore_files` fully configurable in config.json
 - Content hash: MD5 with CRLF→LF normalization for cross-platform consistency
-- Search: token-level matching with field weights (keywords 3.0, filename 2.5, headings 2.0, summary 1.0)
+- Search: bilingual stem matching (EN+RU via snowballstemmer) with field weights (keywords 3.0, headings 2.0, summary 1.5, filename 0.8)
 - Cross-platform: pathlib everywhere, rel_path as POSIX strings
 - Shared index: pass-through for foreign project cards, desync detection for missing files
 - Private index: separate storage for private projects, merged transparently in memory, save routing by project

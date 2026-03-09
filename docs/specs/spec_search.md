@@ -1,10 +1,10 @@
-# spec_search — Text Search
+# spec_search — Bilingual Morphological Search
 
 Status: READY
 
 ## Overview
 
-Token-level text search over enriched DocCards with field weights.
+Bilingual stem-based search (EN + RU) over enriched DocCards with field weights.
 
 ## Public API
 
@@ -22,16 +22,21 @@ Search enriched cards by query.
 
 **Behavior:**
 - Query is split into tokens (whitespace-separated, lowercased)
-- Each token is searched in card fields with weights:
+- Each token is stemmed with both EN and RU Snowball stemmers → `stems(token)` = set of 2 stems
+- Each word in a field is stemmed the same way → `stems(word)` = set of 2 stems
+- Token matches a word if `stems(token) ∩ stems(word) ≠ ∅`
+- `filename` is split on `_`, `-`, `.` before word-level matching
+- Field weights:
   - `keywords`: 3.0
-  - `filename`: 2.5
   - `headings`: 2.0
-  - `summary`: 1.0
-- Matching: case-insensitive substring. Exact token match gets 1.5x bonus.
-- Cards without enrichment (`enriched_at is None`) still match on `filename`.
-- Relevance score is sum of all token-field matches.
-- Filters (project, type) applied before scoring.
+  - `summary`: 1.5
+  - `filename`: 0.8
+- No exact bonus (removed — stem match already handles it)
+- Cards without enrichment (`enriched_at is None`) still match on `filename`
+- Relevance score is sum of all token-field matches
+- Filters (project, type) applied before scoring
 
 ## Dependencies
 
 - `astrolabe.models` (DocCard, SearchResult)
+- `snowballstemmer` (English + Russian stemmers)

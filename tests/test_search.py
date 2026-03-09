@@ -131,3 +131,33 @@ class TestSearch:
         ]
         results = search(cards, "target")
         assert results[0].doc_id == "proj::high.md"
+
+    def test_ru_morphology(self) -> None:
+        """Russian stemming: plural form matches singular keyword."""
+        cards = [_card(keywords=["документ"], enriched=True)]
+        results = search(cards, "документы")
+        assert len(results) == 1
+
+    def test_en_morphology(self) -> None:
+        """English stemming: 'running' matches 'run'."""
+        cards = [_card(summary="task is running in background", enriched=True)]
+        results = search(cards, "run")
+        assert len(results) == 1
+
+    def test_filename_word_split(self) -> None:
+        """Filename snake_case is split into words for matching."""
+        cards = [_card(filename="spec_search.md")]
+        results = search(cards, "search")
+        assert len(results) == 1
+
+    def test_summary_weighted_above_filename(self) -> None:
+        """Summary (1.5) scores higher than filename (0.8) for same token."""
+        card_fn = _card(filename="search.md", rel_path="search.md")
+        card_sm = _card(
+            filename="b.md",
+            rel_path="b.md",
+            summary="search engine documentation",
+            enriched=True,
+        )
+        results = search([card_fn, card_sm], "search")
+        assert results[0].doc_id == card_sm.doc_id

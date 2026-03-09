@@ -29,7 +29,7 @@ Astrolabe is a **dumb server + smart agent** architecture. The server only walks
 ## Quick Start
 
 ```bash
-git clone https://github.com/anthropics-sketches/astrolabe-mcp.git
+git clone https://github.com/zebrr/astrolabe-mcp.git
 cd astrolabe-mcp
 python3 -m venv .venv
 source .venv/bin/activate   # macOS/Linux
@@ -199,16 +199,16 @@ An included enrichment skill (`enrich-index`) automates batch enrichment — it 
 
 ### Search
 
-`search_docs(query)` performs token-level matching over enriched cards with field weights:
+`search_docs(query)` performs bilingual stem matching (English + Russian) over enriched cards with field weights:
 
 | Field | Weight |
 |-------|--------|
 | keywords | 3.0 |
-| filename | 2.5 |
 | headings | 2.0 |
-| summary | 1.0 |
+| summary | 1.5 |
+| filename | 0.8 |
 
-Exact token matches get a 1.5x bonus. Results are sorted by relevance score.
+Each query token and each word in a field are stemmed with both EN and RU Snowball stemmers. A token matches a word if their stem sets intersect — so "running" finds "run", and "документы" finds "документ". Filenames are split on `_`, `-`, `.` before matching. Results are sorted by relevance score.
 
 ## MCP Tools
 
@@ -273,7 +273,7 @@ Add to `runtime/config.json`:
 - **Binary files** — PDF, Office documents are indexed by filename only (no content extraction yet)
 - **Media files** — images, audio, video indexed by filename only
 - **No code parsing** — `.py`/`.sh` files are read as plain text, no AST analysis
-- **No semantic search** — token matching only, no embeddings (planned)
+- **No semantic search** — stem matching only, no embeddings (planned)
 - **No file writing** — read-only; creating/editing documents via MCP is not supported yet
 - **Single index file** — JSON uses filelock, SQLite uses its own locking; not designed for high-throughput multi-client scenarios
 

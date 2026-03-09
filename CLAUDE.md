@@ -151,7 +151,7 @@ Specs live in `docs/specs/*.md`. Read specs INSTEAD of code for module context.
 
 **Milestone completion:**
 - All steps checked, final quality checks pass
-- Archive: docs/PLAN.md + docs/PROGRESS.md → `docs/archive/YYYY-MM-DD_<milestone>/`
+- Archive: docs/PLAN.md + docs/PROGRESS.md → `docs/archive/YYYY-MM-DD_<version>_<milestone>/`
 - New milestone → new docs/PLAN.md (or none if working ad hoc)
 
 ## PROGRESS.md Rules
