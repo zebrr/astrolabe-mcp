@@ -566,7 +566,7 @@ class TestReindexModes:
         (proj / "doc.md").rename(proj / "sub" / "doc.md")
 
         _, stats = reindex(config, existing=index, mode="clean")
-        assert len(stats.potential_moves) == 0
+        assert len(stats.auto_transferred) == 0
         assert stats.removed == 1
 
     def test_default_mode_update(self, fake_project: Path, sample_config: AppConfig) -> None:
@@ -576,9 +576,9 @@ class TestReindexModes:
         assert stats.new == 0
 
 
-class TestPotentialMoves:
-    def test_detects_move_by_filename(self, tmp_path: Path) -> None:
-        """File moved to a new path: old card is desync, new card matches by filename."""
+class TestMoveDetection:
+    def test_auto_transfer_on_rename(self, tmp_path: Path) -> None:
+        """File moved to a new path: enrichment auto-transferred by content_hash."""
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "docs").mkdir()
@@ -594,22 +594,171 @@ class TestPotentialMoves:
         )
         index, _ = reindex(config)
 
-        # Enrich the card
         from astrolabe.index import update_card
 
-        update_card(index, "proj::docs/guide.md", type="reference", summary="A guide")
+        update_card(
+            index,
+            "proj::docs/guide.md",
+            type="reference",
+            summary="A guide",
+            keywords=["guide"],
+        )
 
         # Move the file
         (proj / "archive").mkdir()
         (proj / "docs" / "guide.md").rename(proj / "archive" / "guide.md")
 
         index2, stats = reindex(config, existing=index)
-        assert stats.desync == 1  # old card missing
-        assert stats.new == 1  # new card at new path
-        assert len(stats.potential_moves) == 1
-        assert stats.potential_moves[0] == ("proj::docs/guide.md", "proj::archive/guide.md")
+        assert stats.desync == 0  # resolved by auto-transfer
+        assert stats.new == 1
+        assert len(stats.auto_transferred) == 1
+        assert stats.auto_transferred[0] == ("proj::docs/guide.md", "proj::archive/guide.md")
+        # Old card removed, new card has enrichment
+        assert "proj::docs/guide.md" not in index2.documents
+        new_card = index2.documents["proj::archive/guide.md"]
+        assert new_card.type == "reference"
+        assert new_card.summary == "A guide"
+        assert new_card.keywords == ["guide"]
+        assert new_card.enriched_at is not None
+        assert not new_card.is_stale
 
-    def test_no_move_if_old_card_not_enriched(self, tmp_path: Path) -> None:
+    def test_batch_rename(self, tmp_path: Path) -> None:
+        """Multiple files renamed at once: each auto-transferred independently."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "old").mkdir()
+        for i in range(5):
+            (proj / "old" / f"doc{i}.md").write_text(f"content-{i}")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        from astrolabe.index import update_card
+
+        for i in range(5):
+            update_card(
+                index,
+                f"proj::old/doc{i}.md",
+                type="spec",
+                summary=f"Doc {i}",
+            )
+
+        # Move all files
+        (proj / "new").mkdir()
+        for i in range(5):
+            (proj / "old" / f"doc{i}.md").rename(proj / "new" / f"doc{i}.md")
+
+        index2, stats = reindex(config, existing=index)
+        assert len(stats.auto_transferred) == 5
+        assert stats.desync == 0
+        for i in range(5):
+            new_card = index2.documents[f"proj::new/doc{i}.md"]
+            assert new_card.type == "spec"
+            assert new_card.summary == f"Doc {i}"
+
+    def test_move_to_different_dir(self, tmp_path: Path) -> None:
+        """File moved to a different folder: hash matches, auto-transfer."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::doc.md", type="spec", summary="Spec")
+
+        (proj / "sub").mkdir()
+        (proj / "doc.md").rename(proj / "sub" / "doc.md")
+
+        index2, stats = reindex(config, existing=index)
+        assert len(stats.auto_transferred) == 1
+        assert stats.desync == 0
+        assert "proj::doc.md" not in index2.documents
+        assert index2.documents["proj::sub/doc.md"].type == "spec"
+
+    def test_ambiguous_move(self, tmp_path: Path) -> None:
+        """Two desync cards with same hash + one new card: ambiguous."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "a").mkdir()
+        (proj / "a" / "copy1.md").write_text("same content")
+        (proj / "a" / "copy2.md").write_text("same content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::a/copy1.md", type="spec", summary="Copy 1")
+        update_card(index, "proj::a/copy2.md", type="spec", summary="Copy 2")
+
+        # Delete both, create one new file with same content
+        (proj / "a" / "copy1.md").unlink()
+        (proj / "a" / "copy2.md").unlink()
+        (proj / "b").mkdir()
+        (proj / "b" / "merged.md").write_text("same content")
+
+        _, stats = reindex(config, existing=index)
+        assert len(stats.auto_transferred) == 0
+        assert len(stats.ambiguous_moves) == 1
+        entry = stats.ambiguous_moves[0]
+        assert set(entry["desync_ids"]) == {"proj::a/copy1.md", "proj::a/copy2.md"}
+        assert entry["new_ids"] == ["proj::b/merged.md"]
+
+    def test_no_transfer_if_content_changed(self, tmp_path: Path) -> None:
+        """File renamed AND modified: hash differs, no match."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("original")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+        index, _ = reindex(config)
+
+        from astrolabe.index import update_card
+
+        update_card(index, "proj::doc.md", type="spec", summary="Spec")
+
+        # Rename AND change content
+        (proj / "doc.md").unlink()
+        (proj / "renamed.md").write_text("modified content")
+
+        index2, stats = reindex(config, existing=index)
+        assert len(stats.auto_transferred) == 0
+        assert len(stats.ambiguous_moves) == 0
+        assert stats.desync == 1
+        assert index2.documents["proj::renamed.md"].is_empty
+
+    def test_no_transfer_if_unenriched(self, tmp_path: Path) -> None:
         """Only enriched desync cards are candidates for move detection."""
         proj = tmp_path / "proj"
         proj.mkdir()
@@ -626,14 +775,13 @@ class TestPotentialMoves:
         index, _ = reindex(config)
         # Don't enrich — card is empty
 
-        # Move the file
         (proj / "sub").mkdir()
         (proj / "doc.md").rename(proj / "sub" / "doc.md")
 
         _, stats = reindex(config, existing=index)
-        assert len(stats.potential_moves) == 0
+        assert len(stats.auto_transferred) == 0
 
-    def test_no_move_on_rebuild(self, tmp_path: Path) -> None:
+    def test_no_transfer_on_rebuild(self, tmp_path: Path) -> None:
         """Rebuild mode skips move detection."""
         proj = tmp_path / "proj"
         proj.mkdir()
@@ -656,4 +804,4 @@ class TestPotentialMoves:
         (proj / "doc.md").rename(proj / "sub" / "doc.md")
 
         _, stats = reindex(config, existing=index, mode="rebuild")
-        assert len(stats.potential_moves) == 0
+        assert len(stats.auto_transferred) == 0

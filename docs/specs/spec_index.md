@@ -87,12 +87,21 @@ class ReindexStats:
     unchanged: int
     passthrough: int    # cards from projects not in config, preserved as-is
     desync: int         # cards where file is missing on disk (project in config)
-    potential_moves: list[tuple[str, str]]  # (old_doc_id, new_doc_id) — filename matches
+    auto_transferred: list[tuple[str, str]]  # (old_doc_id, new_doc_id) — auto-transferred moves
+    ambiguous_moves: list[dict]              # {hash, desync_ids, new_ids} — need manual resolution
 ```
 
 ### Move detection
 
-After merge, reindex compares desync cards (enriched, file missing) with new empty cards by `filename`. If a match is found, it's reported as a potential move in `potential_moves`. The agent can then ask the user and transfer enrichment via `update_index_tool()`.
+After merge, reindex detects file moves/renames by matching `content_hash` between enriched desync cards (file missing) and new empty cards (file appeared).
+
+**Algorithm:**
+1. Group enriched desync cards by `content_hash` → `desync_by_hash`
+2. Group new empty cards (from fresh scan only) by `content_hash` → `new_by_hash`
+3. For each matching hash:
+   - **1 desync : 1 new** → auto-transfer enrichment (type, summary, keywords, headings, enriched_at) from old to new card, remove old card from index, record in `auto_transferred`
+   - **Any other ratio** → record in `ambiguous_moves` for manual resolution via `update_index_tool()`
+   - **No match** → cards are independent, no action
 
 Only enriched desync cards are candidates — unenriched cards have nothing to transfer. Only runs in `mode="update"` (skipped in `clean` and `rebuild`).
 

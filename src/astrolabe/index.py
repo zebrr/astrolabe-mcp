@@ -30,7 +30,8 @@ class ReindexStats:
     unchanged: int = 0
     passthrough: int = 0
     desync: int = 0
-    potential_moves: list[tuple[str, str]] = field(default_factory=list)
+    auto_transferred: list[tuple[str, str]] = field(default_factory=list)
+    ambiguous_moves: list[dict[str, object]] = field(default_factory=list)
 
 
 def _compute_hash(file_path: Path) -> str:
@@ -220,21 +221,50 @@ def reindex(
             new_documents[doc_id] = card
             stats.desync += 1
 
-    # Detect potential moves: desync cards matching new cards by filename
+    # Detect moves by content_hash: enriched desync → new empty cards
     if mode == "update":
-        desync_by_name: dict[str, str] = {}
+        desync_by_hash: dict[str, list[str]] = {}
         for doc_id, card in existing.documents.items():
             if (
                 doc_id not in fresh_cards
                 and card.project in config.projects
                 and card.enriched_at is not None
             ):
-                desync_by_name[card.filename] = doc_id
-        for doc_id, card in new_documents.items():
-            if card.is_empty and card.filename in desync_by_name:
-                old_doc_id = desync_by_name[card.filename]
-                if old_doc_id != doc_id:
-                    stats.potential_moves.append((old_doc_id, doc_id))
+                desync_by_hash.setdefault(card.content_hash, []).append(doc_id)
+
+        new_by_hash: dict[str, list[str]] = {}
+        for doc_id in fresh_cards:
+            merged = new_documents.get(doc_id)
+            if merged and merged.is_empty:
+                new_by_hash.setdefault(merged.content_hash, []).append(doc_id)
+
+        for content_hash, desync_ids in desync_by_hash.items():
+            new_ids = new_by_hash.get(content_hash)
+            if not new_ids:
+                continue
+            if len(desync_ids) == 1 and len(new_ids) == 1:
+                old_id, new_id = desync_ids[0], new_ids[0]
+                old_card = new_documents[old_id]
+                new_card = new_documents[new_id]
+                # Transfer enrichment
+                new_card.type = old_card.type
+                new_card.summary = old_card.summary
+                new_card.keywords = old_card.keywords
+                new_card.headings = old_card.headings
+                new_card.enriched_at = old_card.enriched_at
+                new_card.enriched_content_hash = new_card.content_hash
+                # Remove desync card from index
+                del new_documents[old_id]
+                stats.desync -= 1
+                stats.auto_transferred.append((old_id, new_id))
+            else:
+                stats.ambiguous_moves.append(
+                    {
+                        "hash": content_hash,
+                        "desync_ids": desync_ids,
+                        "new_ids": new_ids,
+                    }
+                )
 
     return IndexData(indexed_at=datetime.now(UTC), documents=new_documents), stats
 

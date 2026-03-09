@@ -547,10 +547,12 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         "desync": stats.desync,
         "duration_ms": duration_ms,
     }
-    if stats.potential_moves:
-        result["potential_moves"] = [
-            {"from": old_id, "to": new_id} for old_id, new_id in stats.potential_moves
+    if stats.auto_transferred:
+        result["auto_transferred"] = [
+            {"from": old_id, "to": new_id} for old_id, new_id in stats.auto_transferred
         ]
+    if stats.ambiguous_moves:
+        result["ambiguous_moves"] = stats.ambiguous_moves
     return result
 
 
