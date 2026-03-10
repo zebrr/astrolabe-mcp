@@ -85,17 +85,62 @@ class TestGetCosmos:
 class TestListDocs:
     def test_lists_all(self, server_env: AppConfig) -> None:
         result = srv.list_docs()
-        assert len(result) == 5
+        assert result["total"] == 5
+        assert len(result["result"]) == 5
+        assert "limit" in result
+        assert "offset" in result
 
     def test_filter_by_project(self, server_env: AppConfig) -> None:
         result = srv.list_docs(project="test-project")
-        assert len(result) == 5
+        assert result["total"] == 5
         result = srv.list_docs(project="nonexistent")
-        assert len(result) == 0
+        assert result["total"] == 0
+        assert len(result["result"]) == 0
 
     def test_filter_stale(self, server_env: AppConfig) -> None:
         result = srv.list_docs(stale=True)
-        assert len(result) == 5  # all are empty = stale
+        assert result["total"] == 5  # all are empty = stale
+
+    def test_limit_default(self, server_env: AppConfig) -> None:
+        result = srv.list_docs()
+        assert result["limit"] == 50  # config default
+
+    def test_limit_custom(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(limit=2)
+        assert result["limit"] == 2
+        assert len(result["result"]) == 2
+        assert result["total"] == 5
+
+    def test_offset(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(offset=3)
+        assert len(result["result"]) == 2  # 5 total, skip 3
+        assert result["offset"] == 3
+
+    def test_offset_beyond_total(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(offset=100)
+        assert len(result["result"]) == 0
+        assert "hint" in result
+
+    def test_hint_without_filters(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(limit=2)
+        assert "hint" in result
+        assert "Showing 2 of 5" in result["hint"]
+        assert "Narrow by project" in result["hint"]
+        assert "Narrow by type" in result["hint"]
+        assert "Next page: offset=2" in result["hint"]
+
+    def test_hint_with_project_filter(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(project="test-project", limit=2)
+        assert "hint" in result
+        # Should suggest narrowing by type, not by project
+        assert "Narrow by type" in result["hint"]
+        assert "Narrow by project" not in result["hint"]
+
+    def test_no_timestamps_in_result(self, server_env: AppConfig) -> None:
+        result = srv.list_docs()
+        for item in result["result"]:
+            assert "modified" not in item
+            assert "enriched_at" not in item
 
 
 class TestDesync:
@@ -116,22 +161,22 @@ class TestDesync:
     def test_list_docs_desync_filter(self, server_env: AppConfig, fake_project: Path) -> None:
         (fake_project / "README.md").unlink()
         result = srv.list_docs(desync=True)
-        assert len(result) == 1
-        assert result[0]["filename"] == "README.md"
+        assert result["total"] == 1
+        assert result["result"][0]["filename"] == "README.md"
 
     def test_list_docs_desync_with_project_filter(
         self, server_env: AppConfig, fake_project: Path
     ) -> None:
         (fake_project / "README.md").unlink()
         result = srv.list_docs(project="test-project", desync=True)
-        assert len(result) == 1
+        assert result["total"] == 1
         result = srv.list_docs(project="nonexistent", desync=True)
-        assert len(result) == 0
+        assert result["total"] == 0
 
     def test_list_docs_no_desync(self, server_env: AppConfig) -> None:
         # No files deleted — desync filter returns nothing
         result = srv.list_docs(desync=True)
-        assert len(result) == 0
+        assert result["total"] == 0
 
     def test_passthrough_not_counted_as_desync(self, server_env: AppConfig) -> None:
         # Manually add a card from an unconfigured project
@@ -152,14 +197,15 @@ class TestDesync:
         assert result["desync_documents"] == 0
 
         result = srv.list_docs(desync=True)
-        assert len(result) == 0
+        assert result["total"] == 0
 
 
 class TestSearchDocs:
     def test_search_by_filename(self, server_env: AppConfig) -> None:
         result = srv.search_docs(query="README")
-        assert len(result) >= 1
-        assert any("README" in r["filename"] for r in result)
+        assert result["total"] >= 1
+        assert any("README" in r["filename"] for r in result["result"])
+        assert "max_results" in result
 
     def test_search_enriched(self, server_env: AppConfig) -> None:
         assert srv._index is not None
@@ -173,8 +219,24 @@ class TestSearchDocs:
         )
 
         result = srv.search_docs(query="setup installation")
-        assert len(result) >= 1
-        assert result[0]["doc_id"] == doc_id
+        assert result["total"] >= 1
+        assert result["result"][0]["doc_id"] == doc_id
+
+    def test_max_results_default(self, server_env: AppConfig) -> None:
+        result = srv.search_docs(query="md")
+        assert result["max_results"] == 20  # config default
+
+    def test_max_results_custom(self, server_env: AppConfig) -> None:
+        result = srv.search_docs(query="md", max_results=1)
+        assert result["max_results"] == 1
+        assert len(result["result"]) <= 1
+
+    def test_search_hint_on_truncation(self, server_env: AppConfig) -> None:
+        # With max_results=1, if >1 match exists we get a hint
+        result = srv.search_docs(query="md", max_results=1)
+        if result["total"] > 1:
+            assert "hint" in result
+            assert "Showing top 1" in result["hint"]
 
 
 class TestGetCard:
@@ -223,6 +285,21 @@ class TestReadDoc:
     def test_read_nonexistent(self, server_env: AppConfig) -> None:
         result = srv.read_doc(doc_id="test-project::ghost.md")
         assert "error" in result
+
+    def test_truncation_hint_has_sections(self, server_env: AppConfig, fake_project: Path) -> None:
+        # Create a large file with headings, reindex
+        content = "# Title\n\n## Setup\n\nText.\n\n## Usage\n\nMore text.\n\n"
+        content += "x" * (101 * 1024)  # exceeds 100KB max_file_size_kb
+        (fake_project / "big.md").write_text(content)
+        srv.reindex_tool()
+
+        result = srv.read_doc(doc_id="test-project::big.md")
+        assert result.get("truncated") is True
+        assert "hint" in result
+        assert "Available sections" in result["hint"]
+        assert "Title" in result["hint"]
+        assert "Setup" in result["hint"]
+        assert result["available_sections"] == ["Title", "Setup", "Usage"]
 
 
 class TestUpdateIndex:
@@ -425,8 +502,8 @@ class TestPrivateIndex:
 
     def test_list_docs_includes_private(self, private_env: tuple[AppConfig, Path]) -> None:
         result = srv.list_docs(project="private-proj")
-        assert len(result) == 2
-        filenames = {r["filename"] for r in result}
+        assert result["total"] == 2
+        filenames = {r["filename"] for r in result["result"]}
         assert "secret.md" in filenames
         assert "notes.md" in filenames
 
@@ -439,8 +516,8 @@ class TestPrivateIndex:
             keywords=["secret", "private"],
         )
         result = srv.search_docs(query="secret private")
-        assert len(result) >= 1
-        assert any(r["doc_id"] == "private-proj::secret.md" for r in result)
+        assert result["total"] >= 1
+        assert any(r["doc_id"] == "private-proj::secret.md" for r in result["result"])
 
     def test_read_doc_private(self, private_env: tuple[AppConfig, Path]) -> None:
         result = srv.read_doc(doc_id="private-proj::secret.md")

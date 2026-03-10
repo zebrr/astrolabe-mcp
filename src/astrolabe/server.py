@@ -167,8 +167,8 @@ def _is_desync(card: DocCard, config: AppConfig) -> bool:
 def get_doc_types() -> dict[str, dict[str, Any]]:
     """Get the document type vocabulary from doc_types.yaml.
 
-    Returns all document types with descriptions and examples.
-    Use this to know which types are available before enriching cards.
+    Returns all document types with descriptions, examples, and conventions.
+    Use this before enriching cards with update_index_tool to pick the right type.
     """
     _get_state()  # ensure initialized
     return _doc_types_full
@@ -176,12 +176,13 @@ def get_doc_types() -> dict[str, dict[str, Any]]:
 
 @mcp.tool()
 def get_cosmos() -> dict:  # type: ignore[type-arg]
-    """Get the full catalog: projects, document types, index health.
+    """Get the full catalog overview: projects, types, index health. Start here.
 
     Returns project list, document type stats, enrichment coverage, and sync status.
-    Check desync_documents — if > 0, some files are missing on disk (run reindex).
-    Each project includes desync_count — check which project has missing files.
-    Check stale_documents — if > 0, file content changed since enrichment (re-enrich).
+    Use as the first call in a session to understand what's indexed.
+    Check desync_documents — if > 0, files missing on disk (run reindex).
+    Check stale_documents — if > 0, content changed since enrichment (re-enrich).
+    Then use list_docs/search_docs to drill into specific projects or topics.
     """
     config, index = _get_state()
 
@@ -258,8 +259,13 @@ def list_docs(
     type: str | None = None,
     stale: bool | None = None,
     desync: bool | None = None,
-) -> list[dict]:  # type: ignore[type-arg]
-    """List document cards with optional filters.
+    limit: int | None = None,
+    offset: int = 0,
+) -> dict:  # type: ignore[type-arg]
+    """List document cards with optional filters and pagination.
+
+    Tip: use get_cosmos() first for project overview and counts.
+    Narrow by project/type before browsing large catalogs.
 
     Args:
         project: Filter by project ID.
@@ -269,10 +275,18 @@ def list_docs(
         desync: If true, return only cards whose files are missing on disk
             (deleted or not synced from another machine). Use with project filter
             to diagnose desync in a specific project.
+        limit: Max cards to return. Default from config (~50).
+        offset: Skip first N cards (for pagination).
     """
     config, index = _get_state()
+    effective_limit = limit if limit is not None else config.default_list_limit
+    offset = max(0, offset)
 
-    results = []
+    # Collect all filtered cards + counts for hints
+    filtered: list[DocCard] = []
+    type_counts: dict[str | None, int] = {}
+    project_counts: dict[str, int] = {}
+
     for card in index.documents.values():
         if project is not None and card.project != project:
             continue
@@ -283,20 +297,71 @@ def list_docs(
         if desync is True and not _is_desync(card, config):
             continue
 
-        results.append(
-            {
-                "doc_id": card.doc_id,
-                "project": card.project,
-                "type": card.type,
-                "filename": card.filename,
-                "summary": card.summary,
-                "keywords": card.keywords,
-                "modified": card.modified.isoformat(),
-                "enriched_at": card.enriched_at.isoformat() if card.enriched_at else None,
-            }
-        )
+        filtered.append(card)
+        type_counts[card.type] = type_counts.get(card.type, 0) + 1
+        project_counts[card.project] = project_counts.get(card.project, 0) + 1
 
-    return results
+    total = len(filtered)
+    page = filtered[offset : offset + effective_limit]
+
+    result = [
+        {
+            "doc_id": c.doc_id,
+            "project": c.project,
+            "type": c.type,
+            "filename": c.filename,
+            "summary": c.summary,
+            "keywords": c.keywords,
+        }
+        for c in page
+    ]
+
+    envelope: dict[str, object] = {
+        "total": total,
+        "limit": effective_limit,
+        "offset": offset,
+        "result": result,
+    }
+
+    # Adaptive hint when truncated
+    if total > offset + effective_limit:
+        hint_parts = [f"Showing {len(result)} of {total}."]
+
+        # Applied filters
+        applied = []
+        if project is not None:
+            applied.append(f"project={project}")
+        if type is not None:
+            applied.append(f"type={type}")
+        if stale is True:
+            applied.append("stale=true")
+        if desync is True:
+            applied.append("desync=true")
+        hint_parts.append(f"Filters: {', '.join(applied)}" if applied else "Filters: none")
+
+        # Suggest narrowing by unused axis
+        if project is None and type is None:
+            top_projects = sorted(project_counts.items(), key=lambda x: -x[1])[:5]
+            top_types = sorted(type_counts.items(), key=lambda x: -x[1])[:5]
+            hint_parts.append(
+                "Narrow by project: " + ", ".join(f"{p}({n})" for p, n in top_projects)
+            )
+            hint_parts.append("Narrow by type: " + ", ".join(f"{t}({n})" for t, n in top_types))
+        elif project is not None and type is None:
+            top_types = sorted(type_counts.items(), key=lambda x: -x[1])[:5]
+            hint_parts.append("Narrow by type: " + ", ".join(f"{t}({n})" for t, n in top_types))
+        elif type is not None and project is None:
+            top_projects = sorted(project_counts.items(), key=lambda x: -x[1])[:5]
+            hint_parts.append(
+                "Narrow by project: " + ", ".join(f"{p}({n})" for p, n in top_projects)
+            )
+
+        hint_parts.append(f"Next page: offset={offset + effective_limit}")
+        envelope["hint"] = " ".join(hint_parts)
+    elif offset >= total and total > 0:
+        envelope["hint"] = f"No results at offset={offset}. Total matching: {total}. Try offset=0."
+
+    return envelope
 
 
 @mcp.tool()
@@ -304,27 +369,67 @@ def search_docs(
     query: str,
     project: str | None = None,
     type: str | None = None,
-) -> list[dict]:  # type: ignore[type-arg]
+    max_results: int | None = None,
+) -> dict:  # type: ignore[type-arg]
     """Search documents by query with relevance ranking.
 
     Searches across filename, keywords, headings, and summary.
-    Returns results sorted by relevance.
+    Returns top results sorted by relevance. Use project/type filters
+    or more specific queries to narrow results.
 
     Args:
         query: Search query (e.g. "telegram api", "architecture guide").
         project: Filter by project ID.
         type: Filter by document type.
+        max_results: Max results to return. Default from config (~20).
     """
-    _, index = _get_state()
+    config, index = _get_state()
+    effective_max = max_results if max_results is not None else config.default_search_limit
+
     results = search(index.documents.values(), query, project=project, type=type)
-    return [r.model_dump(mode="json") for r in results]
+    total = len(results)
+    page = results[:effective_max]
+
+    result = [
+        {
+            "doc_id": r.doc_id,
+            "project": r.project,
+            "type": r.type,
+            "filename": r.filename,
+            "summary": r.summary,
+            "keywords": r.keywords,
+            "relevance": r.relevance,
+        }
+        for r in page
+    ]
+
+    envelope: dict[str, object] = {
+        "total": total,
+        "max_results": effective_max,
+        "result": result,
+    }
+
+    if total > effective_max:
+        hint_parts = [f"Showing top {effective_max} of {total} matches."]
+        suggestions = []
+        if project is None:
+            suggestions.append("project=...")
+        if type is None:
+            suggestions.append("type=...")
+        suggestions.append("more specific query")
+        hint_parts.append(f"Try: {', '.join(suggestions)} to narrow results.")
+        envelope["hint"] = " ".join(hint_parts)
+
+    return envelope
 
 
 @mcp.tool()
 def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
     """Get index card for a document — type, summary, keywords, headings, timestamps.
 
-    No file content. Use this to inspect metadata before deciding to read the full file.
+    No file content. Use this to inspect metadata before deciding to read_doc().
+    Includes full timestamps (modified, enriched_at) not shown in list/search results.
+    Call get_card() first, then read_doc() with section= for large files.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
@@ -360,10 +465,12 @@ def read_doc(
     """Read document content from disk. Returns full file, a section by heading, or a line range.
 
     Use after search_docs() or list_docs() to read what you found.
+    For large files: call get_card() first to see headings, then use section= for targeted read.
+    If truncated, response includes available_sections and a hint with navigation options.
 
     Args:
         doc_id: Document ID in format "project::rel_path".
-        section: Heading name to extract specific section.
+        section: Heading name to extract (from card headings or available_sections).
         range: Line range like "1-50" (1-based inclusive).
     """
     config, index = _get_state()
@@ -403,9 +510,20 @@ def read_doc(
         resp["section"] = result.section
     if result.truncated:
         resp["truncated"] = True
-        resp["warning"] = f"File exceeds {config.max_file_size_kb}KB. Use section or range."
-    if result.available_sections is not None:
-        resp["available_sections"] = result.available_sections
+        sections = result.available_sections or []
+        if sections:
+            sections_str = ", ".join(sections)
+            resp["hint"] = (
+                f"Showing lines 1-{result.returned_lines} of {result.total_lines}. "
+                f"Available sections: [{sections_str}]. "
+                f"Use section='...' or range='start-end' for targeted read."
+            )
+        else:
+            resp["hint"] = (
+                f"Showing lines 1-{result.returned_lines} of {result.total_lines}. "
+                f"Use range='start-end' for targeted read."
+            )
+        resp["available_sections"] = sections
     return resp
 
 
@@ -470,11 +588,11 @@ def update_index_tool(
 
 @mcp.tool()
 def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # type: ignore[type-arg]
-    """Rescan filesystem and update index.
+    """Rescan filesystem and update the index.
 
     Call when files were added, removed, or renamed.
     Cards from projects not in local config are always preserved (pass-through).
-    Desync = files in index but missing on disk.
+    After reindex, use list_docs(stale=true) to find cards needing enrichment.
 
     Three modes (escalating):
     - "update" (default): preserve desync cards, preserve enrichment, detect file moves

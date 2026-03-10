@@ -14,7 +14,7 @@ Read a file's content with optional filtering.
 
 **Parameters:**
 - `file_path`: absolute path to the file
-- `max_size_kb`: max size for full read (without section/range). If exceeded, content is truncated with a warning.
+- `max_size_kb`: max size for full read (without section/range). If exceeded, content is truncated and `available_sections` is populated from full text headings.
 - `section`: ATX heading text to extract (e.g. "Setup"). Returns content from that heading until the next heading of same or higher level.
 - `line_range`: e.g. "1-50". 1-based inclusive.
 
@@ -38,7 +38,7 @@ class ReadResult:
     returned_lines: int
     section: str | None = None    # heading name if section was used
     truncated: bool = False       # True if content was truncated due to size limit
-    available_sections: list[str] | None = None  # set when section not found
+    available_sections: list[str] | None = None  # set when section not found OR when truncated
 ```
 
 ### `extract_headings(text: str) -> list[str]`

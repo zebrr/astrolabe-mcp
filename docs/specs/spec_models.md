@@ -21,6 +21,8 @@ class AppConfig(BaseModel):
     ignore_dirs: list[str]             # directory names to skip
     ignore_files: list[str]            # glob patterns for files to skip
     max_file_size_kb: int              # max file size for full read (without section/range)
+    default_list_limit: int = 50       # default limit for list_docs pagination
+    default_search_limit: int = 20     # default max_results for search_docs
 
     # Private index (optional)
     private_projects: dict[str, Path] = {}    # name → absolute path (private projects)

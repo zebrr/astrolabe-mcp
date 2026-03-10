@@ -72,7 +72,7 @@ Done. The server starts automatically when the client launches.
   ],
   "ignore_dirs": ["src", "lib", "app", "tests", "test"],
   "ignore_files": ["*.lock"],
-  "max_file_size_kb": 100
+  "max_file_size_kb": 50
 }
 ```
 
@@ -169,7 +169,7 @@ Agent → get_cosmos()
        ← {projects: 3, total: 120, empty: 45, enriched: 75}
 
 Agent → list_docs(stale=true)
-       ← [{doc_id: "web-app::docs/API.md", type: null, summary: null}, ...]
+       ← {total: 45, limit: 50, offset: 0, result: [{doc_id: "web-app::docs/API.md", ...}, ...]}
 
 Agent → read_doc("web-app::docs/API.md")
        ← {content: "# REST API Reference\n\n## Authentication\n...", total_lines: 340}
@@ -187,7 +187,7 @@ After enrichment, the card is searchable:
 
 ```
 Agent → search_docs("authentication api")
-       ← [{doc_id: "web-app::docs/API.md", relevance: 0.92, ...}]
+       ← {total: 3, max_results: 20, result: [{doc_id: "web-app::docs/API.md", relevance: 0.92, ...}]}
 ```
 
 An included enrichment skill (`enrich-index`) automates batch enrichment — it processes all stale cards in a forked context. See `.claude/skills/enrich-index/SKILL.md`.
@@ -211,8 +211,8 @@ Each query token and each word in a field are stemmed with both EN and RU Snowba
 |------|-------------|
 | `get_doc_types()` | Document type vocabulary from doc_types.yaml (descriptions + examples) |
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
-| `list_docs(project?, type?, stale?, desync?)` | List document cards with filters |
-| `search_docs(query, project?, type?)` | Search by query with relevance ranking |
+| `list_docs(project?, type?, stale?, desync?, limit?, offset?)` | List document cards with filters and pagination |
+| `search_docs(query, project?, type?, max_results?)` | Search by query with relevance ranking |
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
 | `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card (type validated against doc_types.yaml) |

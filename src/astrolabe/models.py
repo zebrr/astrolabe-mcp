@@ -19,6 +19,8 @@ class AppConfig(BaseModel):
     ignore_dirs: list[str]
     ignore_files: list[str]
     max_file_size_kb: int
+    default_list_limit: int = 50
+    default_search_limit: int = 20
 
     # Private index (optional)
     private_projects: dict[str, Path] = {}

@@ -141,6 +141,7 @@ def read_file(
             total_lines=total,
             returned_lines=len(truncated_lines),
             truncated=True,
+            available_sections=extract_headings(text),
         )
 
     return ReadResult(

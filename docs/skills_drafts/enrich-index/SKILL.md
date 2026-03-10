@@ -22,7 +22,9 @@ Batch-enrich document cards in the astrolabe index. You read each file, understa
 
 1. Call `get_doc_types()` to load the document type vocabulary (types, descriptions, examples)
 2. Call `get_cosmos()` to see available projects and index health
-3. Call `list_docs(stale=true)` to get all cards that need enrichment (empty or content-changed)
+3. Call `list_docs(stale=true)` to get cards that need enrichment (empty or content-changed).
+   Response is an envelope: `{"total": N, "result": [...], "hint": "..."}`.
+   Cards are in `response["result"]`. If `total` exceeds the page size, call again with `offset=` to get the next page. Collect all cards before starting enrichment.
 4. For each card, in batches of 5-10:
    a. If the file has a binary extension (media or binary_doc) → assign the appropriate type, summary by filename, skip `read_doc()`
    b. Otherwise, call `read_doc(doc_id)` to read the file content

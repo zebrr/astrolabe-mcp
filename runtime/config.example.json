@@ -20,5 +20,9 @@
   "_ignore_note": "Git-aware scanning excludes gitignored files automatically. ignore_dirs/ignore_files only need domain-specific exclusions — git-tracked dirs/files you don't want in the knowledge index.",
   "ignore_dirs": ["src", "lib", "app", "tests", "test"],
   "ignore_files": ["*.lock"],
-  "max_file_size_kb": 100
+  "max_file_size_kb": 50,
+  "default_list_limit": 50,
+  "_default_list_limit_note": "Max cards returned by list_docs per page. Agent can override per-call.",
+  "default_search_limit": 20,
+  "_default_search_limit_note": "Max results returned by search_docs. Agent can override per-call."
 }

@@ -86,3 +86,4 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Reindex modes: `update` (preserve all) → `clean` (remove desync) → `rebuild` (reset enrichment)
 - doc_types.yaml: single shared vocabulary. `get_doc_types()` tool returns full structure. Type validation in `update_index`.
 - doc_types.yaml lookup: `index_dir` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)
+- Output optimization (v0.7.0): `list_docs`/`search_docs` return envelope `{total, limit/max_results, result, hint?}` with pagination and adaptive agent hints. Timestamps stripped from list/search output (kept in `get_card`). Defaults in AppConfig (`default_list_limit=50`, `default_search_limit=20`)

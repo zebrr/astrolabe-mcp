@@ -42,18 +42,28 @@ Entry point. Returns projects, document types, index stats.
 - `desync_documents`: global count of cards where file missing on disk (project in config)
 - Each `ProjectSummary` includes `desync_count` — per-project desync count (runtime file existence check via `_is_desync()`)
 
-### `list_docs(project?, type?, stale?, desync?) -> list[DocCard summary]`
+### `list_docs(project?, type?, stale?, desync?, limit?, offset?) -> dict envelope`
 
-List document cards with optional filters.
+List document cards with optional filters and pagination.
+- `limit: int | None = None` — max cards to return. `None` → `config.default_list_limit` (default 50). Agent can override per-call.
+- `offset: int = 0` — skip first N cards. Clamped to >= 0.
 - `stale=true`: only cards where `is_stale or is_empty`
 - `desync=true`: only cards whose files are missing on disk (runtime file existence check via `_is_desync()`)
 - Filters are AND-combined: `stale=true, desync=true` returns cards matching both conditions
 - Pass-through cards (project not in config) are never desync
-- Returns card summaries (doc_id, project, type, filename, summary, keywords, modified, enriched_at)
+- Returns envelope: `{total, limit, offset, result: [card_dicts], hint?}`
+- Card dicts contain: doc_id, project, type, filename, summary, keywords. **No timestamps** (modified/enriched_at stripped — use `get_card()` for full metadata).
+- When `total > offset + limit` (truncated): `hint` key with adaptive guidance — shows counts by unused filter axis, suggests narrowing, shows next page offset.
+- Tip in docstring: use `get_cosmos()` first for project overview and counts. Narrow by project/type before browsing.
 
-### `search_docs(query, project?, type?) -> list[SearchResult]`
+### `search_docs(query, project?, type?, max_results?) -> dict envelope`
 
 Search by query with field weights. Delegates to `search.search()`.
+- `max_results: int | None = None` — max results to return. `None` → `config.default_search_limit` (default 20). Agent can override per-call.
+- `search()` API unchanged — server calls it, takes `len()` as total, slices `[:max_results]`.
+- Returns envelope: `{total, max_results, result: [SearchResult dicts], hint?}`
+- When `total > max_results` (truncated): `hint` key suggesting project/type filter or more specific query.
+- Tip in docstring: use specific multi-word queries for better results.
 
 ### `get_card(doc_id) -> DocCard full`
 
@@ -66,7 +76,9 @@ Index card metadata for a specific document. No file content.
 Read document content from disk. Delegates to `reader.read_file()`.
 - Resolves absolute path from `config.all_projects[card.project] / card.rel_path`
 - Returns content + metadata (total_lines, returned_lines, section, truncated)
+- When truncated: `hint` with available sections list and guidance to use section/range
 - Raises error if doc_id not found or file missing
+- Tip in docstring: use `get_card()` first to check metadata and headings before reading full file. Use section/range for large files.
 
 ### `update_index(doc_id, type?, summary?, keywords?, headings?) -> update confirmation`
 

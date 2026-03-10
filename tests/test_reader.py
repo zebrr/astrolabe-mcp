@@ -135,6 +135,29 @@ class TestReadFileFull:
         assert result.total_lines == 0
         assert result.returned_lines == 0
 
+    def test_truncation_provides_sections(self, tmp_path: Path) -> None:
+        f = tmp_path / "big.md"
+        content = "# Title\n\nIntro.\n\n## Setup\n\nSetup text.\n\n## Usage\n\nUsage text.\n"
+        # Pad to exceed 1KB
+        content += "x" * 2048
+        f.write_text(content)
+
+        result = read_file(f, max_size_kb=1)
+        assert result.truncated is True
+        assert result.available_sections is not None
+        assert "Title" in result.available_sections
+        assert "Setup" in result.available_sections
+        assert "Usage" in result.available_sections
+
+    def test_truncation_no_headings(self, tmp_path: Path) -> None:
+        f = tmp_path / "big.md"
+        f.write_text("Just plain text.\n" * 200)
+
+        result = read_file(f, max_size_kb=1)
+        assert result.truncated is True
+        assert result.available_sections is not None
+        assert result.available_sections == []
+
     def test_section_takes_precedence_over_range(self, tmp_path: Path) -> None:
         f = tmp_path / "doc.md"
         f.write_text(SAMPLE_MD)
