@@ -32,6 +32,7 @@ def _make_card(
         card.keywords = ["readme", "docs"]
         card.headings = ["Introduction", "Usage"]
         card.enriched_at = datetime(2026, 1, 2, tzinfo=UTC)
+        card.enriched_content_hash = card.content_hash
     return card
 
 
@@ -98,6 +99,21 @@ class TestLoadSaveRoundtrip:
         assert loaded_card.keywords == ["readme", "docs"]
         assert loaded_card.headings == ["Introduction", "Usage"]
         assert loaded_card.enriched_at == datetime(2026, 1, 2, tzinfo=UTC)
+        assert loaded_card.enriched_content_hash == "abc123"
+
+    def test_stale_card_roundtrip(self, storage: StorageBackend) -> None:
+        """Stale card (content changed after enrichment) survives roundtrip."""
+        card = _make_card(enriched=True)
+        card.content_hash = "new_hash"  # simulate file change
+        assert card.is_stale
+
+        storage.save(_make_index([card]))
+        loaded = storage.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.content_hash == "new_hash"
+        assert loaded_card.enriched_content_hash == "abc123"
+        assert loaded_card.is_stale
 
     def test_multiple_cards(self, storage: StorageBackend) -> None:
         cards = [
@@ -369,3 +385,48 @@ class TestSqliteSpecific:
         assert loaded_card.summary is None
         assert loaded_card.keywords is None
         assert loaded_card.enriched_at is None
+        assert loaded_card.enriched_content_hash is None
+
+    def test_schema_migration_adds_enriched_content_hash(self, tmp_path: Path) -> None:
+        """Opening a DB without enriched_content_hash column auto-migrates."""
+        import sqlite3 as _sqlite3
+
+        db_path = tmp_path / "legacy.db"
+        conn = _sqlite3.connect(str(db_path))
+        conn.executescript("""
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY, project TEXT NOT NULL,
+                filename TEXT NOT NULL, rel_path TEXT NOT NULL,
+                size INTEGER NOT NULL, modified TEXT NOT NULL,
+                content_hash TEXT NOT NULL, type TEXT,
+                headings TEXT, summary TEXT, keywords TEXT, enriched_at TEXT
+            );
+        """)
+        conn.execute("INSERT INTO meta VALUES ('version', '0.7.0')")
+        conn.execute("INSERT INTO meta VALUES ('indexed_at', '2026-01-01T00:00:00+00:00')")
+        conn.execute("""
+            INSERT INTO documents VALUES (
+                'proj::doc.md', 'proj', 'doc.md', 'doc.md', 100,
+                '2026-01-01T00:00:00+00:00', 'abc123',
+                'spec', NULL, 'A spec', NULL, '2026-01-02T00:00:00+00:00'
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        # Open with SqliteStorage — should auto-migrate
+        s = SqliteStorage(db_path)
+        loaded = s.load()
+        assert loaded is not None
+        card = loaded.documents["proj::doc.md"]
+        assert card.enriched_content_hash is None  # old row had no value
+        assert card.type == "spec"
+
+        # Now save a card with enriched_content_hash
+        card.enriched_content_hash = card.content_hash
+        s.save_card(card, loaded.indexed_at)
+
+        loaded2 = s.load()
+        assert loaded2 is not None
+        assert loaded2.documents["proj::doc.md"].enriched_content_hash == "abc123"

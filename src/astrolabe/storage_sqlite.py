@@ -1,5 +1,6 @@
 """SQLite storage backend for astrolabe index."""
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -28,7 +29,8 @@ CREATE TABLE IF NOT EXISTS documents (
     headings     TEXT,
     summary      TEXT,
     keywords     TEXT,
-    enriched_at  TEXT
+    enriched_at  TEXT,
+    enriched_content_hash TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_project ON documents(project);
@@ -51,6 +53,7 @@ def _card_to_row(card: DocCard) -> tuple[object, ...]:
         card.summary,
         json.dumps(card.keywords) if card.keywords is not None else None,
         card.enriched_at.isoformat() if card.enriched_at is not None else None,
+        card.enriched_content_hash,
     )
 
 
@@ -72,14 +75,16 @@ def _row_to_card(row: sqlite3.Row) -> DocCard:
         summary=row["summary"],
         keywords=json.loads(keywords_raw) if keywords_raw is not None else None,
         enriched_at=datetime.fromisoformat(enriched_raw) if enriched_raw is not None else None,
+        enriched_content_hash=row["enriched_content_hash"],
     )
 
 
 _INSERT_SQL = """\
 INSERT OR REPLACE INTO documents
     (doc_id, project, filename, rel_path, size, modified,
-     content_hash, type, headings, summary, keywords, enriched_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     content_hash, type, headings, summary, keywords, enriched_at,
+     enriched_content_hash)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -97,6 +102,9 @@ class SqliteStorage:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=DELETE")
         self._conn.executescript(_SCHEMA)
+        # Migrate existing databases: add enriched_content_hash column
+        with contextlib.suppress(sqlite3.OperationalError):
+            self._conn.execute("ALTER TABLE documents ADD COLUMN enriched_content_hash TEXT")
 
     def load(self) -> IndexData | None:
         """Load entire index from SQLite database."""

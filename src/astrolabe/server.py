@@ -452,6 +452,8 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
         "summary": card.summary,
         "keywords": card.keywords,
         "enriched_at": card.enriched_at.isoformat() if card.enriched_at else None,
+        "content_hash": card.content_hash,
+        "enriched_content_hash": card.enriched_content_hash,
         "stale": card.is_stale,
     }
 
