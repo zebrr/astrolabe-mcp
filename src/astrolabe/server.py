@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from astrolabe import __version__
 from astrolabe.config import load_config, load_doc_types_full
-from astrolabe.index import build_index, reindex, update_card
+from astrolabe.index import build_hash_map, build_index, reindex, update_card
 from astrolabe.models import (
     AppConfig,
     CosmosResponse,
@@ -189,7 +189,13 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     # Per-project stats
     project_stats: dict[str, dict[str, int]] = {}
     for pid in config.all_projects:
-        project_stats[pid] = {"doc_count": 0, "enriched_count": 0, "desync_count": 0}
+        project_stats[pid] = {
+            "doc_count": 0,
+            "enriched_count": 0,
+            "stale_count": 0,
+            "empty_count": 0,
+            "desync_count": 0,
+        }
 
     total = len(index.documents)
     enriched = 0
@@ -203,6 +209,10 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             project_stats[card.project]["doc_count"] += 1
             if not card.is_empty:
                 project_stats[card.project]["enriched_count"] += 1
+            if card.is_stale:
+                project_stats[card.project]["stale_count"] += 1
+            if card.is_empty:
+                project_stats[card.project]["empty_count"] += 1
 
             if _is_desync(card, config):
                 desync += 1
@@ -224,6 +234,8 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             id=pid,
             doc_count=stats["doc_count"],
             enriched_count=stats["enriched_count"],
+            stale_count=stats["stale_count"],
+            empty_count=stats["empty_count"],
             desync_count=stats["desync_count"],
             last_indexed=index.indexed_at,
         )
@@ -304,8 +316,10 @@ def list_docs(
     total = len(filtered)
     page = filtered[offset : offset + effective_limit]
 
-    result = [
-        {
+    hash_map = build_hash_map(index.documents)
+    result = []
+    for c in page:
+        entry: dict[str, object] = {
             "doc_id": c.doc_id,
             "project": c.project,
             "type": c.type,
@@ -313,8 +327,9 @@ def list_docs(
             "summary": c.summary,
             "keywords": c.keywords,
         }
-        for c in page
-    ]
+        if c.content_hash in hash_map:
+            entry["has_copies"] = True
+        result.append(entry)
 
     envelope: dict[str, object] = {
         "total": total,
@@ -387,6 +402,21 @@ def search_docs(
     effective_max = max_results if max_results is not None else config.default_search_limit
 
     results = search(index.documents.values(), query, project=project, type=type)
+
+    # Dedup by content_hash: keep first (highest relevance) per hash
+    hash_map = build_hash_map(index.documents)
+    if hash_map:
+        seen_hashes: set[str] = set()
+        deduped = []
+        for r in results:
+            card = index.documents.get(r.doc_id)
+            if card and card.content_hash in hash_map:
+                if card.content_hash in seen_hashes:
+                    continue
+                seen_hashes.add(card.content_hash)
+            deduped.append(r)
+        results = deduped
+
     total = len(results)
     page = results[:effective_max]
 
@@ -440,7 +470,7 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
         return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
 
     card = index.documents[doc_id]
-    return {
+    result: dict[str, object] = {
         "doc_id": card.doc_id,
         "project": card.project,
         "filename": card.filename,
@@ -456,6 +486,13 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
         "enriched_content_hash": card.enriched_content_hash,
         "stale": card.is_stale,
     }
+
+    # Add copies if this document has duplicates in other locations
+    hash_map = build_hash_map(index.documents)
+    if card.content_hash in hash_map:
+        result["copies"] = [did for did in hash_map[card.content_hash] if did != doc_id]
+
+    return result
 
 
 @mcp.tool()

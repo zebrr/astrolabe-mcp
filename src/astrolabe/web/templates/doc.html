@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Astrolabe — Read {{ card.filename }}{% endblock %}
+
+{% block content %}
+<hgroup>
+    <h2>{{ card.filename }}</h2>
+    <p>
+        <a href="/cards/{{ quote(card.doc_id, safe='') }}">&larr; Back to card</a>
+        &middot; {{ card.project }} :: {{ card.rel_path }}
+        &middot; {{ returned_lines }}/{{ total_lines }} lines
+        {% if section %}&middot; Section: {{ section }}{% endif %}
+    </p>
+</hgroup>
+
+{% if available_sections %}
+<details>
+    <summary>Sections ({{ available_sections | length }})</summary>
+    <ul>
+        {% for s in available_sections %}
+        <li><a href="/read/{{ quote(card.doc_id, safe='') }}?section={{ quote(s) }}">{{ s }}</a></li>
+        {% endfor %}
+    </ul>
+</details>
+{% endif %}
+
+<article class="doc-content">
+    {{ rendered_html | safe }}
+</article>
+{% endblock %}

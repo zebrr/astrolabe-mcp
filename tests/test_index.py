@@ -11,6 +11,7 @@ from astrolabe.index import (
     _compute_hash,
     _list_files_git,
     _list_files_rglob,
+    build_hash_map,
     build_index,
     load_index,
     reindex,
@@ -869,6 +870,79 @@ class TestGitAwareScan:
         # Should still find files via rglob fallback
         filenames = {c.filename for c in cards}
         assert "README.md" in filenames
+
+
+class TestBuildHashMap:
+    def test_no_duplicates_returns_empty(self) -> None:
+        cards = {
+            "a::doc.md": DocCard(
+                project="a",
+                filename="doc.md",
+                rel_path="doc.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="aaa",
+            ),
+            "b::doc.md": DocCard(
+                project="b",
+                filename="doc.md",
+                rel_path="doc.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="bbb",
+            ),
+        }
+        assert build_hash_map(cards) == {}
+
+    def test_duplicates_returned(self) -> None:
+        cards = {
+            "a::doc.md": DocCard(
+                project="a",
+                filename="doc.md",
+                rel_path="doc.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="same",
+            ),
+            "b::doc.md": DocCard(
+                project="b",
+                filename="doc.md",
+                rel_path="doc.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="same",
+            ),
+            "c::other.md": DocCard(
+                project="c",
+                filename="other.md",
+                rel_path="other.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="unique",
+            ),
+        }
+        result = build_hash_map(cards)
+        assert "same" in result
+        assert set(result["same"]) == {"a::doc.md", "b::doc.md"}
+        assert "unique" not in result
+
+    def test_empty_index(self) -> None:
+        assert build_hash_map({}) == {}
+
+    def test_three_way_duplicate(self) -> None:
+        cards = {
+            f"{p}::doc.md": DocCard(
+                project=p,
+                filename="doc.md",
+                rel_path="doc.md",
+                size=10,
+                modified=datetime(2026, 3, 6, tzinfo=UTC),
+                content_hash="same",
+            )
+            for p in ("a", "b", "c")
+        }
+        result = build_hash_map(cards)
+        assert len(result["same"]) == 3
 
 
 class TestListFilesGit:

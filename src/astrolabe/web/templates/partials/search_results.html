@@ -1,0 +1,28 @@
+{% if results %}
+{% set max_rel = results[0].relevance if results else 1 %}
+<p><strong>{{ results | length }}</strong> results{% if query %} for "{{ query }}"{% endif %}</p>
+<table>
+    <thead>
+        <tr>
+            <th>Filename</th>
+            <th>Project</th>
+            <th>Type</th>
+            <th>Summary</th>
+            <th>Relevance</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in results %}
+        <tr>
+            <td><a href="/cards/{{ quote(r.doc_id, safe='') }}">{{ r.filename }}</a></td>
+            <td>{{ r.project }}</td>
+            <td>{% if r.type %}<span class="badge">{{ r.type }}</span>{% else %}-{% endif %}</td>
+            <td class="summary-cell">{{ r.summary[:80] if r.summary else '-' }}{% if r.summary and r.summary|length > 80 %}...{% endif %}</td>
+            <td>{{ (r.relevance / max_rel * 100) | round(0) | int }}%</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No results found{% if query %} for "{{ query }}"{% endif %}.</p>
+{% endif %}

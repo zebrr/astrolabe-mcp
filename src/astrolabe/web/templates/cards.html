@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Astrolabe — Cards{% endblock %}
+
+{% block content %}
+<h3>Cards: <span class="subtitle">{{ total }} total</span></h3>
+
+<!-- Filters — always visible, inline, auto-submit on any change -->
+<form method="get" action="/cards" class="filters-row" onchange="this.submit()">
+    <select name="project">
+        <option value="">All projects</option>
+        {% for p in projects %}
+        <option value="{{ p }}" {% if filter_project == p %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+    </select>
+    <select name="type">
+        <option value="">All types</option>
+        {% for t in types %}
+        <option value="{{ t }}" {% if filter_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+    </select>
+    <label class="filter-check"><input type="checkbox" name="stale" value="true" {% if filter_stale %}checked{% endif %}> Stale ({{ count_stale }})</label>
+    <label class="filter-check"><input type="checkbox" name="empty" value="true" {% if filter_empty %}checked{% endif %}> Empty ({{ count_empty }})</label>
+    <label class="filter-check"><input type="checkbox" name="desync" value="true" {% if filter_desync %}checked{% endif %}> Desync ({{ count_desync }})</label>
+</form>
+
+<!-- Card list -->
+<div id="card-list">
+    {% include "partials/card_list.html" %}
+</div>
+{% endblock %}

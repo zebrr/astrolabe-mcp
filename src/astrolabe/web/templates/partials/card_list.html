@@ -1,0 +1,46 @@
+<table class="compact-table">
+    <thead>
+        <tr>
+            <th>Filename</th>
+            <th>Project</th>
+            <th>Type</th>
+            <th>Summary</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for card in cards %}
+        <tr class="{% if card.is_empty %}empty-row{% elif card.is_stale %}stale-row{% endif %}">
+            <td>
+                <a href="/cards/{{ quote(card.doc_id, safe='') }}">{{ card.filename }}</a>
+                {% if card.content_hash in hash_map %}<span class="dup-mark" title="Has copies">&#x2234;</span>{% endif %}
+            </td>
+            <td>
+                {% if filter_project %}{{ card.project }}{% else %}<a href="/cards?project={{ quote(card.project) }}">{{ card.project }}</a>{% endif %}
+            </td>
+            <td>{% if card.type %}<span class="badge">{{ card.type }}</span>{% else %}<em>-</em>{% endif %}</td>
+            <td class="summary-cell">{{ card.summary[:80] if card.summary else '-' }}{% if card.summary and card.summary|length > 80 %}...{% endif %}</td>
+            <td>
+                {% if state.is_desync(card) %}<mark class="desync-mark">desync</mark>
+                {% elif card.is_empty %}<span class="empty-mark">empty</span>
+                {% elif card.is_stale %}<span class="stale-mark">stale</span>
+                {% else %}<span class="ok-mark">ok</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5"><em>No cards match the filters.</em></td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total > offset + limit %}
+<a href="?offset={{ offset + limit }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
+    Next ({{ offset + limit + 1 }}-{{ [offset + limit + limit, total] | min }})
+</a>
+{% endif %}
+{% if offset > 0 %}
+<a href="?offset={{ [offset - limit, 0] | max }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
+    Previous
+</a>
+{% endif %}

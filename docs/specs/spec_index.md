@@ -80,6 +80,14 @@ Update enrichment fields on a card. Only updates fields that are explicitly pass
 - Raises `KeyError` if doc_id not in index
 - Returns the updated card
 
+### `build_hash_map(documents: dict[str, DocCard]) -> dict[str, list[str]]`
+
+Build reverse index: `content_hash → [doc_ids]` for duplicate detection.
+
+- Returns only hashes that appear more than once (duplicates)
+- Used by server tools (search_docs, list_docs, get_card) for on-the-fly dedup
+- O(n) scan over all documents, no persistent storage
+
 ### `ReindexStats` (dataclass)
 
 ```python

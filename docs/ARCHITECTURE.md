@@ -37,7 +37,16 @@ astrolabe-mcp/
 │   ├── storage.py           # StorageBackend Protocol + factory
 │   ├── storage_json.py      # JSON file storage backend
 │   ├── storage_sqlite.py    # SQLite storage backend
-│   └── server.py            # MCP transport: tools → core
+│   ├── server.py            # MCP transport: tools → core
+│   └── web/                 # Web UI transport (optional)
+│       ├── __init__.py
+│       ├── __main__.py      # python -m astrolabe.web
+│       ├── app.py           # FastAPI factory, lifespan
+│       ├── state.py         # AppState: config, index, storage
+│       ├── routes_pages.py  # HTML page routes
+│       ├── routes_api.py    # HTMX API routes
+│       ├── templates/       # Jinja2 templates
+│       └── static/          # Pico CSS, HTMX, custom CSS
 └── tests/                   # pytest, tmp_path fixtures
 ```
 
@@ -54,6 +63,7 @@ astrolabe-mcp/
 | storage_json.py | done | spec_storage.md | JSON file backend (wraps index.py load/save) |
 | storage_sqlite.py | done | spec_storage.md | SQLite backend (single-row upserts, cloud-safe) |
 | server.py | done | spec_server.md | 8 MCP tools wrapping core functions via StorageBackend |
+| web/ | done | spec_web.md | Local web UI: FastAPI + Jinja2 + HTMX. Card editing, search, doc reader |
 
 ## Dependencies
 
@@ -62,6 +72,7 @@ models.py ← config.py ← index.py ← storage_json.py ← storage.py ← serv
 models.py ← reader.py ←──────────────────────────────────────────────┘
 models.py ← search.py ←──────────────────────────────────────────────┘
 models.py ← storage_sqlite.py ← storage.py
+                                                                      ← web/state.py ← web/app.py
 ```
 
 ## MCP Tools (8)
@@ -87,3 +98,5 @@ See `docs/CONCEPT.md` for full tool specifications.
 - doc_types.yaml: single shared vocabulary. `get_doc_types()` tool returns full structure. Type validation in `update_index`.
 - doc_types.yaml lookup: `index_dir` first, fallback to `config_path.parent` (shared vocabulary in cloud sync)
 - Output optimization (v0.7.0): `list_docs`/`search_docs` return envelope `{total, limit/max_results, result, hint?}` with pagination and adaptive agent hints. Timestamps stripped from list/search output (kept in `get_card`). Defaults in AppConfig (`default_list_limit=50`, `default_search_limit=20`)
+- Content deduplication (v0.7.2): documents with identical `content_hash` across projects are detected on-the-fly via `build_hash_map()`. `search_docs` collapses duplicates (first by relevance wins). `list_docs` marks copies with `has_copies: true`. `get_card` lists all copies in `copies: [doc_id, ...]`. No storage changes — computed at query time.
+- Web UI (v0.8.0): Local browser interface via FastAPI + Jinja2 + HTMX. Separate process from MCP server, shared storage. Optional `[web]` dependencies. Launch: `.venv/bin/python -m astrolabe.web`. AppState class extracts server.py's global state pattern into a proper class. Card inline editing, markdown doc reader, live search, reindex actions.

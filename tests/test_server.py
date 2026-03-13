@@ -671,3 +671,94 @@ class TestDocTypesLookup:
         )
         assert "cloud_type" in srv._doc_types
         assert "local_type" not in srv._doc_types
+
+
+class TestContentDedup:
+    """Tests for content deduplication across search, list, and get_card."""
+
+    @pytest.fixture
+    def dedup_env(
+        self, tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Set up two projects with an identical file to test dedup."""
+        # Create second project with a file identical to README.md
+        proj_b = tmp_path / "proj-b"
+        proj_b.mkdir()
+        # Copy exact content from fake_project README.md
+        readme_content = (fake_project / "README.md").read_text()
+        (proj_b / "README.md").write_text(readme_content)
+        # Also a unique file
+        (proj_b / "unique.md").write_text("# Unique content in proj-b")
+
+        config_file = tmp_path / "config.json"
+        config_data = {
+            "projects": {
+                "test-project": str(fake_project),
+                "proj-b": str(proj_b),
+            },
+            "index_dir": str(tmp_path),
+            "index_extensions": [".md", ".yaml", ".yml", ".txt"],
+            "ignore_dirs": [".git", ".venv", "src", "node_modules", "__pycache__"],
+            "ignore_files": ["*.pyc", "*.lock"],
+            "max_file_size_kb": 100,
+        }
+        config_file.write_text(json.dumps(config_data))
+
+        doc_types_file = tmp_path / "doc_types.yaml"
+        doc_types_file.write_text(
+            "document_types:\n  reference:\n    description: Reference material\n"
+        )
+
+        monkeypatch.setenv("ASTROLABE_CONFIG", str(config_file))
+        srv._config = None
+        srv._index = None
+        srv._storage = None
+        srv._private_storage = None
+        srv._doc_types = {}
+        srv._doc_types_full = {}
+        srv._init()
+
+    def test_search_dedup_same_hash(self, dedup_env: None) -> None:
+        """Search returns only one result per content_hash."""
+        result = srv.search_docs(query="README")
+        readme_results = [r for r in result["result"] if r["filename"] == "README.md"]
+        assert len(readme_results) == 1
+
+    def test_search_dedup_total_reflects_dedup(self, dedup_env: None) -> None:
+        """Total count in search is post-dedup."""
+        result = srv.search_docs(query="README")
+        # Only one README should be counted
+        readme_count = sum(1 for r in result["result"] if r["filename"] == "README.md")
+        assert readme_count == 1
+
+    def test_search_unique_not_affected(self, dedup_env: None) -> None:
+        """Unique documents are not affected by dedup."""
+        result = srv.search_docs(query="unique proj-b")
+        unique_results = [r for r in result["result"] if r["filename"] == "unique.md"]
+        assert len(unique_results) == 1
+
+    def test_list_has_copies_present(self, dedup_env: None) -> None:
+        """list_docs marks cards with has_copies=True when duplicates exist."""
+        result = srv.list_docs()
+        readmes = [r for r in result["result"] if r["filename"] == "README.md"]
+        assert len(readmes) == 2  # both shown
+        for r in readmes:
+            assert r.get("has_copies") is True
+
+    def test_list_no_copies_absent(self, dedup_env: None) -> None:
+        """list_docs omits has_copies for unique documents."""
+        result = srv.list_docs()
+        uniques = [r for r in result["result"] if r["filename"] == "unique.md"]
+        assert len(uniques) == 1
+        assert "has_copies" not in uniques[0]
+
+    def test_get_card_copies_field(self, dedup_env: None) -> None:
+        """get_card includes copies list for duplicated documents."""
+        result = srv.get_card(doc_id="test-project::README.md")
+        assert "copies" in result
+        assert "proj-b::README.md" in result["copies"]
+
+    def test_get_card_no_copies_for_unique(self, dedup_env: None) -> None:
+        """get_card omits copies for unique documents."""
+        result = srv.get_card(doc_id="proj-b::unique.md")
+        assert "copies" not in result

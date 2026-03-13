@@ -26,6 +26,7 @@ Astrolabe is a **dumb server + smart agent** architecture. The server only walks
 - **Managed typing** — fixed set of document types with `undef` as a catch-all
 - **Binary-safe** — media and office files are indexed by metadata and filename
 - **Zero-intrusion** — no frontmatter, no changes to your project files
+- **Web UI** — local browser interface for browsing, searching, and editing index cards with markdown rendering
 
 ## Quick Start
 
@@ -36,6 +37,7 @@ python3 -m venv .venv
 source .venv/bin/activate   # macOS/Linux
 # .venv\Scripts\activate    # Windows
 pip install -e .
+pip install -e ".[web]"   # optional: local web UI
 ```
 
 Copy and edit the config files:
@@ -156,6 +158,7 @@ It should return your project list and index statistics.
 models.py ← config.py ← index.py ← server.py
 models.py ← reader.py ←──────────────┘
 models.py ← search.py ←──────────────┘
+                                      ← web/state.py ← web/app.py
 ```
 
 On startup, the server reads `config.json`, scans all project directories, and builds an index of file metadata (name, path, size, content hash). Index cards start empty — no types, summaries, or keywords.
@@ -263,18 +266,43 @@ Add to `runtime/config.json`:
 - One shared `doc_types.yaml` — the team agrees on types, private projects use the same vocabulary
 - Without `private_projects`/`private_index_dir`, behavior is identical to before
 
+## Web UI
+
+Astrolabe includes an optional local web interface for browsing and managing the index in a browser.
+
+**Install and run:**
+
+```bash
+pip install -e ".[web]"
+.venv/bin/python -m astrolabe.web          # macOS/Linux
+# .venv\Scripts\python -m astrolabe.web    # Windows
+```
+
+Opens at http://127.0.0.1:8420. Custom host/port: `--host 0.0.0.0 --port 9000`.
+
+**Features:**
+
+- **Dashboard** — index health overview, project stats, document type breakdown. All elements are clickable links to filtered card lists
+- **Card list** — filterable by project, type, stale/empty/desync. Filters auto-apply on change
+- **Card editing** — inline editing of type, summary, keywords, and headings. Changes are persisted to the same storage the MCP server uses
+- **Document reader** — markdown rendering with section navigation
+- **Search** — live search from the header, results ranked by relevance
+- **Reindex** — trigger reindex (update/clean/rebuild) from the header
+
+The web server runs as a separate process and shares the storage backend with the MCP server. Changes made in the web UI are immediately visible to MCP clients, and vice versa (click Refresh to reload).
+
 ## Current Limitations
 
 - **Binary files** — PDF, Office documents are indexed by filename only (no content extraction yet)
 - **Media files** — images, audio, video indexed by filename only
 - **No code parsing** — `.py`/`.sh` files are read as plain text, no AST analysis
 - **No semantic search** — stem matching only, no embeddings (planned)
-- **No file writing** — read-only; creating/editing documents via MCP is not supported yet
+- **No file writing** — index card editing via Web UI, but no document content editing via MCP
 - **Single index file** — JSON uses filelock, SQLite uses its own locking; not designed for high-throughput multi-client scenarios
 
 ## Contributing
 
-Fork, install with `pip install -e ".[dev]"`, run `ruff check src/ tests/ && mypy src/ && pytest -v` before submitting.
+Fork, install with `pip install -e ".[dev,web]"`, run `ruff check src/ tests/ && mypy src/ && pytest -v` before submitting.
 
 ## License
 

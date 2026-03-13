@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Astrolabe — {{ card.filename }}{% endblock %}
+
+{% block content %}
+<h3>
+    {{ card.filename }}
+    {% if not is_desync %}<a href="/read/{{ quote(card.doc_id, safe='') }}" class="read-link" title="Read document">read &rarr;</a>{% endif %}
+</h3>
+
+<!-- Path + compact metadata -->
+<div class="card-meta">
+    <span><a href="/cards?project={{ quote(card.project) }}">{{ card.project }}</a> :: {{ card.rel_path }}</span>
+    <span class="meta-sep">|</span>
+    <span>{{ (card.size / 1024) | round(1) }}KB</span>
+    <span class="meta-sep">|</span>
+    <span>mod {{ card.modified.strftime('%Y-%m-%d') }}</span>
+    <span class="meta-sep">|</span>
+    <span>enr {{ card.enriched_at.strftime('%Y-%m-%d') if card.enriched_at else 'never' }}</span>
+    <span class="meta-sep">|</span>
+    {% if is_desync %}<mark class="desync-mark">desync</mark>
+    {% elif card.is_empty %}<span class="empty-mark">empty</span>
+    {% elif card.is_stale %}<span class="stale-mark">stale</span>
+    {% else %}<span class="ok-mark">ok</span>
+    {% endif %}
+    <span class="meta-sep">|</span>
+    <code class="hash-code">{{ card.content_hash[:8] }}</code>
+</div>
+
+{% if copies %}
+<div class="copies-info">
+    Copies: {% for cid in copies %}<a href="/cards/{{ quote(cid, safe='') }}">{{ cid }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+</div>
+{% endif %}
+
+<!-- Enrichment fields (swappable via HTMX) -->
+<div id="card-fields">
+    {% include "partials/card_fields.html" %}
+</div>
+{% endblock %}

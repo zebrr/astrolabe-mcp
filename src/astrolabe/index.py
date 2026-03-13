@@ -310,6 +310,17 @@ def reindex(
     return IndexData(indexed_at=datetime.now(UTC), documents=new_documents), stats
 
 
+def build_hash_map(documents: dict[str, DocCard]) -> dict[str, list[str]]:
+    """Build reverse index: content_hash -> [doc_ids] for duplicate detection.
+
+    Returns only hashes that appear more than once (duplicates).
+    """
+    hash_to_ids: dict[str, list[str]] = {}
+    for doc_id, card in documents.items():
+        hash_to_ids.setdefault(card.content_hash, []).append(doc_id)
+    return {h: ids for h, ids in hash_to_ids.items() if len(ids) > 1}
+
+
 def update_card(
     index: IndexData,
     doc_id: str,

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Astrolabe — Dashboard{% endblock %}
+
+{% block content %}
+<h3>Dashboard: <span class="subtitle">Indexed {{ cosmos.indexed_at.strftime('%Y-%m-%d %H:%M') }}</span></h3>
+
+<!-- Stats bar -->
+<div class="stats-row">
+    <a href="/cards" class="stat-item"><strong>{{ cosmos.total_documents }}</strong> Total</a>
+    <span class="stat-item"><strong>{{ cosmos.enriched_documents }}</strong> Enriched</span>
+    <a href="/cards?stale=true" class="stat-item {% if cosmos.stale_documents > 0 %}stale-bg{% endif %}"><strong>{{ cosmos.stale_documents }}</strong> Stale</a>
+    <a href="/cards?empty=true" class="stat-item {% if cosmos.empty_documents > 0 %}empty-bg{% endif %}"><strong>{{ cosmos.empty_documents }}</strong> Empty</a>
+    <a href="/cards?desync=true" class="stat-item {% if cosmos.desync_documents > 0 %}desync-bg{% endif %}"><strong>{{ cosmos.desync_documents }}</strong> Desync</a>
+</div>
+
+<!-- Projects table — every cell is a link to filtered cards -->
+<h4>Projects</h4>
+<table class="compact-table">
+    <thead>
+        <tr><th>Project</th><th>Docs</th><th>Enriched</th><th>Stale</th><th>Empty</th><th>Desync</th></tr>
+    </thead>
+    <tbody>
+        {% for p in cosmos.projects %}
+        <tr>
+            <td><a href="/cards?project={{ quote(p.id) }}">{{ p.id }}</a></td>
+            <td><a href="/cards?project={{ quote(p.id) }}">{{ p.doc_count }}</a></td>
+            <td><a href="/cards?project={{ quote(p.id) }}">{{ p.enriched_count }}</a></td>
+            <td>{% if p.stale_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&stale=true" class="stale-mark">{{ p.stale_count }}</a>{% else %}0{% endif %}</td>
+            <td>{% if p.empty_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&empty=true" class="empty-mark">{{ p.empty_count }}</a>{% else %}0{% endif %}</td>
+            <td>{% if p.desync_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&desync=true"><mark>{{ p.desync_count }}</mark></a>{% else %}0{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Document types -->
+<h4>Document Types</h4>
+<div class="type-badges">
+    {% for t in cosmos.document_types %}
+    <a href="/cards?type={{ quote(t.type) }}" class="badge" data-tooltip="{{ t.description }}">
+        {{ t.type }} <small>({{ t.count }})</small>
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}

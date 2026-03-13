@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Astrolabe — Search{% endblock %}
+
+{% block content %}
+<h3>Search{% if query %}: <span class="subtitle">{{ query }}</span>{% endif %}</h3>
+
+<form hx-post="/api/search" hx-target="#search-results" hx-swap="innerHTML"
+      hx-trigger="submit, keyup changed delay:300ms from:#search-query">
+    <div class="grid">
+        <input type="text" name="query" id="search-query"
+               placeholder="Search documents..." value="{{ query or '' }}" autofocus>
+        <button type="submit">Search</button>
+    </div>
+</form>
+
+<div id="search-results">
+    {% if initial_results is defined %}
+        {% include "partials/search_results.html" with context %}
+    {% else %}
+        <p>Enter a search query.</p>
+    {% endif %}
+</div>
+
+{% if query %}
+<script>
+    // Auto-trigger search on page load when query is pre-filled
+    document.addEventListener('DOMContentLoaded', function() {
+        htmx.trigger(document.querySelector('form'), 'submit');
+    });
+</script>
+{% endif %}
+{% endblock %}

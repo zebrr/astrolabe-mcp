@@ -1,0 +1,90 @@
+{% if toast_message is defined and toast_message %}
+<div class="toast toast-{{ toast_level }}">{{ toast_message }}</div>
+{% endif %}
+
+{% if edit_mode is defined and edit_mode %}
+<!-- Edit mode -->
+<section class="card-section">
+    <div class="section-header"><strong>Edit Enrichment</strong></div>
+    <form hx-post="/api/cards/{{ quote(card.doc_id, safe='') }}/save"
+          hx-target="#card-fields" hx-swap="innerHTML">
+        <div class="edit-grid">
+            <label>
+                Type
+                <select name="type">
+                    <option value="">— none —</option>
+                    {% for t_name, t_desc in doc_types.items() %}
+                    <option value="{{ t_name }}" {% if card.type == t_name %}selected{% endif %}
+                            title="{{ t_desc }}">{{ t_name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label>
+                Summary
+                <textarea name="summary" rows="3">{{ card.summary or '' }}</textarea>
+            </label>
+
+            <label>
+                Keywords <small>(comma-separated)</small>
+                <input type="text" name="keywords"
+                       value="{{ card.keywords | join(', ') if card.keywords else '' }}">
+            </label>
+
+            <label>
+                Headings <small>(comma-separated)</small>
+                <input type="text" name="headings"
+                       value="{{ card.headings | join(', ') if card.headings else '' }}">
+            </label>
+        </div>
+        <div class="edit-actions">
+            <button type="submit" class="compact-btn primary-btn">Save</button>
+            <button type="button" class="compact-btn muted-btn"
+                    hx-post="/api/cards/{{ quote(card.doc_id, safe='') }}/cancel"
+                    hx-target="#card-fields" hx-swap="innerHTML">Cancel</button>
+        </div>
+    </form>
+</section>
+
+{% else %}
+<!-- View mode -->
+<section class="card-section">
+    <div class="section-header">
+        <strong>Enrichment</strong>
+        <button class="compact-btn outline" style="margin-left:auto"
+                hx-get="/api/cards/{{ quote(card.doc_id, safe='') }}/edit"
+                hx-target="#card-fields" hx-swap="innerHTML">Edit</button>
+    </div>
+
+    <table class="card-fields-table">
+        <tr>
+            <td class="field-label">Type</td>
+            <td>{% if card.type %}<span class="badge">{{ card.type }}</span>{% else %}<em>not set</em>{% endif %}</td>
+        </tr>
+        <tr>
+            <td class="field-label">Summary</td>
+            <td>{{ card.summary or 'not set' }}</td>
+        </tr>
+        <tr>
+            <td class="field-label">Keywords</td>
+            <td>
+                {% if card.keywords %}
+                    {% for kw in card.keywords %}<a href="/search?q={{ kw }}" class="kw-link"><kbd>{{ kw }}</kbd></a> {% endfor %}
+                {% else %}
+                    <em>not set</em>
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td class="field-label">Headings</td>
+            <td>
+                {% if card.headings %}
+                    {% for h in card.headings %}{{ h }}{% if not loop.last %} &middot; {% endif %}{% endfor %}
+                {% else %}
+                    <em>not set</em>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+</section>
+{% endif %}

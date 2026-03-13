@@ -53,6 +53,7 @@ List document cards with optional filters and pagination.
 - Pass-through cards (project not in config) are never desync
 - Returns envelope: `{total, limit, offset, result: [card_dicts], hint?}`
 - Card dicts contain: doc_id, project, type, filename, summary, keywords. **No timestamps** (modified/enriched_at stripped — use `get_card()` for full metadata).
+- **Content dedup**: cards with duplicates in other locations get `has_copies: true` field. Absent when no copies exist.
 - When `total > offset + limit` (truncated): `hint` key with adaptive guidance — shows counts by unused filter axis, suggests narrowing, shows next page offset.
 - Tip in docstring: use `get_cosmos()` first for project overview and counts. Narrow by project/type before browsing.
 
@@ -61,6 +62,7 @@ List document cards with optional filters and pagination.
 Search by query with field weights. Delegates to `search.search()`.
 - `max_results: int | None = None` — max results to return. `None` → `config.default_search_limit` (default 20). Agent can override per-call.
 - `search()` API unchanged — server calls it, takes `len()` as total, slices `[:max_results]`.
+- **Content dedup**: results with the same `content_hash` are collapsed — only the first (highest relevance) is returned. `total` reflects post-dedup count.
 - Returns envelope: `{total, max_results, result: [SearchResult dicts], hint?}`
 - When `total > max_results` (truncated): `hint` key suggesting project/type filter or more specific query.
 - Tip in docstring: use specific multi-word queries for better results.
@@ -69,6 +71,7 @@ Search by query with field weights. Delegates to `search.search()`.
 
 Index card metadata for a specific document. No file content.
 - Includes `stale: bool` flag (true if file content changed since enrichment)
+- **Content dedup**: if document has copies (same `content_hash`), includes `copies: [doc_id, ...]` listing other locations. Absent when no copies exist.
 - Raises error if doc_id not found
 
 ### `read_doc(doc_id, section?, range?) -> file content`

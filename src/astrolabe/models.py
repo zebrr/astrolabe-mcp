@@ -98,6 +98,8 @@ class ProjectSummary(BaseModel):
     id: str
     doc_count: int
     enriched_count: int
+    stale_count: int = 0
+    empty_count: int = 0
     desync_count: int = 0
     last_indexed: datetime
 
