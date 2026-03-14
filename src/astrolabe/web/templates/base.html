@@ -19,10 +19,10 @@
             </form>
         </div>
         <div class="header-right">
-            <button class="hbtn hbtn-primary" hx-post="/api/refresh" hx-target="#toast-container" hx-swap="innerHTML" title="Reload index from storage">Refresh</button>
-            <button class="hbtn hbtn-primary" hx-post="/api/reindex" hx-vals='{"mode": "update"}' hx-target="#toast-container" hx-swap="innerHTML" title="Reindex (update)">Reindex</button>
-            <button class="hbtn hbtn-muted" onclick="if(confirm('Clean removes desync cards. Continue?')) htmx.ajax('POST', '/api/reindex', {target:'#toast-container', swap:'innerHTML', values:{mode:'clean'}})" title="Remove desync cards">Clean</button>
-            <button class="hbtn hbtn-muted" onclick="if(confirm('Rebuild resets ALL enrichment. Are you sure?')) htmx.ajax('POST', '/api/reindex', {target:'#toast-container', swap:'innerHTML', values:{mode:'rebuild'}})" title="Reset all enrichment">Rebuild</button>
+            <button class="hbtn hbtn-primary" hx-post="/api/refresh" hx-target="#toast-container" hx-swap="innerHTML" title="Re-read index from storage file">Reload index</button>
+            <button class="hbtn hbtn-primary" hx-post="/api/reindex" hx-vals='{"mode": "update"}' hx-target="#toast-container" hx-swap="innerHTML" title="Rescan filesystem, update file metadata">Reindex</button>
+            <button class="hbtn hbtn-muted" onclick="if(confirm('Removes cards for files that no longer exist on disk. Continue?')) htmx.ajax('POST', '/api/reindex', {target:'#toast-container', swap:'innerHTML', values:{mode:'clean'}})" title="Remove cards for deleted/moved files">Clean desync</button>
+            <button class="hbtn hbtn-danger" onclick="if(confirm('WARNING: This will DELETE ALL ENRICHMENT — types, summaries, keywords, headings. All cards will become empty. This cannot be undone.\n\nAre you sure?')) htmx.ajax('POST', '/api/reindex', {target:'#toast-container', swap:'innerHTML', values:{mode:'rebuild'}})" title="DANGER: Reset all enrichment data">Rebuild</button>
         </div>
     </header>
 

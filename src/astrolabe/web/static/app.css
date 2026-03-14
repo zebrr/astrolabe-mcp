@@ -91,6 +91,14 @@
 
 .hbtn-muted:hover { background: #999; color: #fff; }
 
+.hbtn-danger {
+    background: #dc3545;
+    color: #fff;
+    border-color: #dc3545;
+}
+
+.hbtn-danger:hover { background: #a71d2a; }
+
 /* Generic compact button (used in card detail, pagination) */
 .compact-btn {
     padding: 0.2rem 0.5rem !important;
@@ -186,6 +194,8 @@
 
 /* Status marks */
 .stale-mark { color: #b8860b; font-weight: bold; }
+.stale-click { cursor: pointer; text-decoration: underline dotted; }
+.stale-click:hover { color: #8b6914; }
 .empty-mark { color: #888; font-style: italic; }
 .ok-mark { color: #28a745; }
 

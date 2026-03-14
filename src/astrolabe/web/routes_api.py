@@ -135,6 +135,17 @@ async def card_save(
     )
 
 
+@router.post("/cards/{doc_id:path}/dismiss-stale", response_class=HTMLResponse)
+async def dismiss_stale(request: Request, doc_id: str) -> Any:
+    """Mark stale card as reviewed — update enriched_at/hash without changing enrichment."""
+    state = get_state(request)
+    try:
+        state.do_update_card(doc_id)
+    except KeyError:
+        return HTMLResponse("Card not found", status_code=404)
+    return HTMLResponse('<span class="ok-mark">ok</span>')
+
+
 @router.post("/cards/{doc_id:path}/cancel", response_class=HTMLResponse)
 async def card_cancel(request: Request, doc_id: str) -> Any:
     """Cancel edit and return view partial."""
