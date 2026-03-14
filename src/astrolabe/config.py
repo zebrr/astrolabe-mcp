@@ -62,6 +62,8 @@ def load_doc_types_full(doc_types_path: Path) -> dict[str, dict[str, Any]]:
             entry: dict[str, Any] = {"description": type_def["description"].strip()}
             if "examples" in type_def:
                 entry["examples"] = type_def["examples"]
+            if "search_boost" in type_def:
+                entry["search_boost"] = float(type_def["search_boost"])
             result[type_name] = entry
     return result
 

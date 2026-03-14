@@ -100,10 +100,13 @@ async def cards_page(
 @router.get("/search", response_class=HTMLResponse)
 async def search_page(request: Request, q: str | None = None) -> Any:
     """Search page. Accepts optional q= param from nav search form."""
+    state = get_state(request)
+    query = q.strip() if q else ""
+    results = state.search_cards(query) if query else []
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "search.html",
-        {"request": request, "query": q or ""},
+        {"request": request, "query": query, "results": results, "quote": quote},
     )
 
 

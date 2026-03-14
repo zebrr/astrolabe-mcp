@@ -130,6 +130,7 @@ async def card_save(
             "quote": quote,
             "toast_message": "Card updated",
             "toast_level": "success",
+            "toast_reload": True,
         },
     )
 
@@ -212,7 +213,7 @@ async def reindex_action(
     templates = request.app.state.templates
     return templates.TemplateResponse(
         "partials/toast.html",
-        {"request": request, "message": message, "level": level},
+        {"request": request, "message": message, "level": level, "reload": True},
     )
 
 
@@ -228,5 +229,6 @@ async def refresh_action(request: Request) -> Any:
             "request": request,
             "message": f"Reloaded: {len(state.index.documents)} documents",
             "level": "success",
+            "reload": True,
         },
     )

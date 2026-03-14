@@ -4,6 +4,7 @@ document_types:
     description: >
       Project instruction, agent rules and workflow.
       Usually CLAUDE.md or PROJECT.md in project root.
+    search_boost: 1.2   # optional: multiplier for search relevance (default 1.0)
     examples:
       - "CLAUDE.md"
       - "PROJECT.md"
@@ -12,6 +13,7 @@ document_types:
     description: >
       Reference material on API, tool, approach, or methodology.
       Often reused across projects.
+    search_boost: 1.5
     examples:
       - "docs/references/API Guide.md"
 
@@ -19,6 +21,7 @@ document_types:
     description: >
       Technical specification, architecture, design document.
       Describes how a system or module works.
+    search_boost: 1.2
     examples:
       - "docs/specs/spec_server.md"
 
@@ -49,5 +52,6 @@ document_types:
     description: >
       Catch-all type for files that do not fit any other type.
       Assign undef and explain in summary what the file contains.
+    search_boost: 0.5
     examples:
       - "notes.txt"

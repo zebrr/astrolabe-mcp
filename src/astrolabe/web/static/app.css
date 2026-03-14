@@ -152,6 +152,21 @@
     padding: 0.3rem 0.5rem;
 }
 
+/* Dashboard table — fixed layout, numeric columns equal width, right-aligned */
+.cosmos-table {
+    width: 100% !important;
+    table-layout: fixed !important;
+}
+.cosmos-table td:not(:first-child),
+.cosmos-table th:not(:first-child) {
+    text-align: right !important;
+}
+.cosmos-table td:not(:first-child) a,
+.cosmos-table td:not(:first-child) mark {
+    display: inline;
+    text-align: inherit;
+}
+
 /* Badges */
 .badge {
     display: inline-block;

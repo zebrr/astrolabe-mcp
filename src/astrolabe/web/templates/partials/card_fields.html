@@ -1,5 +1,8 @@
 {% if toast_message is defined and toast_message %}
 <div class="toast toast-{{ toast_level }}">{{ toast_message }}</div>
+{% if toast_reload is defined and toast_reload %}
+<script>setTimeout(function(){ location.reload(); }, 1200);</script>
+{% endif %}
 {% endif %}
 
 {% if edit_mode is defined and edit_mode %}

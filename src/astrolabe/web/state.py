@@ -350,7 +350,18 @@ class AppState:
         max_results: int = 20,
     ) -> list[Any]:
         """Search cards by query. Returns SearchResult list."""
-        results = search(self.index.documents.values(), query, project=project, type=type)
+        type_boosts = {
+            name: entry.get("search_boost", 1.0)
+            for name, entry in self.doc_types_full.items()
+            if "search_boost" in entry
+        }
+        results = search(
+            self.index.documents.values(),
+            query,
+            project=project,
+            type=type,
+            type_boosts=type_boosts,
+        )
 
         # Dedup by content_hash
         hash_map = build_hash_map(self.index.documents)

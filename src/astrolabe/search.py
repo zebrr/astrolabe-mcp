@@ -72,6 +72,7 @@ def search(
     *,
     project: str | None = None,
     type: str | None = None,
+    type_boosts: dict[str, float] | None = None,
 ) -> list[SearchResult]:
     """Search enriched cards by query with bilingual stem matching.
 
@@ -80,6 +81,8 @@ def search(
         query: Search query string.
         project: Optional project filter.
         type: Optional document type filter.
+        type_boosts: Optional dict of type_name → multiplier from doc_types.yaml.
+            Types not in the dict default to 1.0.
 
     Returns:
         List of SearchResult sorted by relevance descending.
@@ -99,6 +102,9 @@ def search(
 
         score = _score_card(card, tokens)
         if score > 0:
+            # Apply type-based boost
+            if type_boosts and card.type:
+                score *= type_boosts.get(card.type, 1.0)
             results.append(
                 SearchResult(
                     doc_id=card.doc_id,

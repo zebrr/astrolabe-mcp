@@ -14,19 +14,10 @@
 </form>
 
 <div id="search-results">
-    {% if initial_results is defined %}
-        {% include "partials/search_results.html" with context %}
+    {% if query %}
+        {% include "partials/search_results.html" %}
     {% else %}
         <p>Enter a search query.</p>
     {% endif %}
 </div>
-
-{% if query %}
-<script>
-    // Auto-trigger search on page load when query is pre-filled
-    document.addEventListener('DOMContentLoaded', function() {
-        htmx.trigger(document.querySelector('form'), 'submit');
-    });
-</script>
-{% endif %}
 {% endblock %}

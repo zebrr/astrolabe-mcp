@@ -401,7 +401,14 @@ def search_docs(
     config, index = _get_state()
     effective_max = max_results if max_results is not None else config.default_search_limit
 
-    results = search(index.documents.values(), query, project=project, type=type)
+    type_boosts = {
+        name: entry.get("search_boost", 1.0)
+        for name, entry in _doc_types_full.items()
+        if "search_boost" in entry
+    }
+    results = search(
+        index.documents.values(), query, project=project, type=type, type_boosts=type_boosts
+    )
 
     # Dedup by content_hash: keep first (highest relevance) per hash
     hash_map = build_hash_map(index.documents)
