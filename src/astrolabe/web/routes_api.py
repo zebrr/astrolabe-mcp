@@ -48,6 +48,10 @@ async def cards_partial(
             "state": state,
             "hash_map": hash_map,
             "filter_project": project,
+            "filter_type": type,
+            "filter_stale": stale,
+            "filter_empty": empty,
+            "filter_desync": desync,
         },
     )
 
@@ -132,6 +136,83 @@ async def card_save(
             "toast_level": "success",
             "toast_reload": True,
         },
+    )
+
+
+@router.get("/cards/{doc_id:path}/type-edit", response_class=HTMLResponse)
+async def type_edit(request: Request, doc_id: str) -> Any:
+    """Return inline type selector (open listbox) for card list."""
+    state = get_state(request)
+    card = state.index.documents.get(doc_id)
+    if card is None:
+        return HTMLResponse("Card not found", status_code=404)
+
+    doc_id_enc = quote(doc_id, safe="")
+    save_url = f"/api/cards/{doc_id_enc}/type-save"
+    badge_url = f"/api/cards/{doc_id_enc}/type-badge"
+
+    options = ['<option value="">— none —</option>']
+    for t_name in sorted(state.doc_types.keys()):
+        sel = " selected" if card.type == t_name else ""
+        options.append(f'<option value="{t_name}"{sel}>{t_name}</option>')
+
+    size = min(len(state.doc_types) + 1, 10)
+    select_html = (
+        f'<select class="inline-type-select" size="{size}" autofocus '
+        f'onchange="htmx.ajax(\'POST\', \'{save_url}\', '
+        f'{{target:this.closest(\'.type-cell\'), swap:\'innerHTML\', '
+        f'values:{{type:this.value}}}})" '
+        f'onblur="var s=this; setTimeout(function(){{ if(s.parentNode) '
+        f"htmx.ajax('GET', '{badge_url}', "
+        f'{{target:s.closest(\'.type-cell\'), swap:\'innerHTML\'}})}}, 150)" '
+        f'onkeydown="if(event.key===\'Escape\') this.blur()" '
+        f'>{"".join(options)}</select>'
+    )
+    return HTMLResponse(select_html)
+
+
+@router.get("/cards/{doc_id:path}/type-badge", response_class=HTMLResponse)
+async def type_badge(request: Request, doc_id: str) -> Any:
+    """Return current type badge (for cancel)."""
+    state = get_state(request)
+    card = state.index.documents.get(doc_id)
+    if card is None:
+        return HTMLResponse("Card not found", status_code=404)
+    return HTMLResponse(_type_badge_html(doc_id, card.type))
+
+
+@router.post("/cards/{doc_id:path}/type-save", response_class=HTMLResponse)
+async def type_save(request: Request, doc_id: str, type: str = Form("")) -> Any:
+    """Save type from inline selector, return badge."""
+    state = get_state(request)
+    card_type = type.strip() or None
+
+    if card_type and state.doc_types and card_type not in state.doc_types:
+        return HTMLResponse('<em>invalid</em>')
+
+    try:
+        card = state.do_update_card(doc_id, type=card_type)
+    except KeyError:
+        return HTMLResponse("Card not found", status_code=404)
+
+    return HTMLResponse(_type_badge_html(doc_id, card.type))
+
+
+def _type_badge_html(doc_id: str, card_type: str | None) -> str:
+    """Generate clickable type badge HTML."""
+    doc_id_enc = quote(doc_id, safe="")
+    if card_type:
+        return (
+            f'<span class="badge type-click" '
+            f'hx-get="/api/cards/{doc_id_enc}/type-edit" '
+            f'hx-target="closest .type-cell" hx-swap="innerHTML" '
+            f'title="Click to change type">{card_type}</span>'
+        )
+    return (
+        f'<em class="type-click" '
+        f'hx-get="/api/cards/{doc_id_enc}/type-edit" '
+        f'hx-target="closest .type-cell" hx-swap="innerHTML" '
+        f'title="Click to set type">-</em>'
     )
 
 

@@ -192,6 +192,37 @@
     gap: 0.4rem;
 }
 
+/* Inline type editing in card list */
+.type-click { cursor: pointer; }
+.type-click:hover { opacity: 0.7; }
+
+.inline-type-select {
+    padding: 0;
+    font-size: 0.8em;
+    height: auto;
+    width: auto;
+    margin: 0;
+    border-radius: 0.2rem;
+    position: absolute;
+    z-index: 50;
+    background: var(--pico-background-color);
+    border: 1px solid var(--pico-primary);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.inline-type-select option {
+    padding: 0.15rem 0.5rem;
+}
+
+.inline-type-select option:checked {
+    background: var(--pico-primary-background);
+    color: var(--pico-primary-inverse);
+}
+
+.type-cell {
+    position: relative;
+}
+
 /* Status marks */
 .stale-mark { color: #b8860b; font-weight: bold; }
 .stale-click { cursor: pointer; text-decoration: underline dotted; }

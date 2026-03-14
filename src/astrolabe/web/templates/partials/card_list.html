@@ -18,7 +18,7 @@
             <td>
                 {% if filter_project %}{{ card.project }}{% else %}<a href="/cards?project={{ quote(card.project) }}">{{ card.project }}</a>{% endif %}
             </td>
-            <td>{% if card.type %}<span class="badge">{{ card.type }}</span>{% else %}<em>-</em>{% endif %}</td>
+            <td class="type-cell">{% if card.type %}<span class="badge type-click" hx-get="/api/cards/{{ quote(card.doc_id, safe='') }}/type-edit" hx-target="closest .type-cell" hx-swap="innerHTML" title="Click to change type">{{ card.type }}</span>{% else %}<em class="type-click" hx-get="/api/cards/{{ quote(card.doc_id, safe='') }}/type-edit" hx-target="closest .type-cell" hx-swap="innerHTML" title="Click to set type">-</em>{% endif %}</td>
             <td class="summary-cell">{{ card.summary[:80] if card.summary else '-' }}{% if card.summary and card.summary|length > 80 %}...{% endif %}</td>
             <td>
                 {% if state.is_desync(card) %}<mark class="desync-mark">desync</mark>
@@ -34,13 +34,22 @@
     </tbody>
 </table>
 
+{% set qs_parts = [] %}
+{% if filter_project %}{% set _ = qs_parts.append("project=" ~ quote(filter_project)) %}{% endif %}
+{% if filter_type %}{% set _ = qs_parts.append("type=" ~ quote(filter_type)) %}{% endif %}
+{% if filter_stale %}{% set _ = qs_parts.append("stale=true") %}{% endif %}
+{% if filter_empty %}{% set _ = qs_parts.append("empty=true") %}{% endif %}
+{% if filter_desync %}{% set _ = qs_parts.append("desync=true") %}{% endif %}
+{% set qs_base = "&".join(qs_parts) %}
+{% set qs_sep = "&" if qs_base else "" %}
+
 {% if total > offset + limit %}
-<a href="?offset={{ offset + limit }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
+<a href="?{{ qs_base }}{{ qs_sep }}offset={{ offset + limit }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
     Next ({{ offset + limit + 1 }}-{{ [offset + limit + limit, total] | min }})
 </a>
 {% endif %}
 {% if offset > 0 %}
-<a href="?offset={{ [offset - limit, 0] | max }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
+<a href="?{{ qs_base }}{{ qs_sep }}offset={{ [offset - limit, 0] | max }}&limit={{ limit }}" class="compact-btn outline" style="display:inline-block">
     Previous
 </a>
 {% endif %}
