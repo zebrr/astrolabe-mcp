@@ -255,12 +255,16 @@
     cursor: help;
 }
 
-/* Summary cell truncation */
+/* Filename cell — limit width, wrap long paths */
+.filename-cell {
+    max-width: 250px;
+    word-break: break-all;
+}
+
+/* Summary cell — wider, allow wrapping */
 .summary-cell {
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 450px;
+    word-break: break-word;
 }
 
 /* Filters row — inline, compact */

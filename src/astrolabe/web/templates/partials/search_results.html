@@ -1,7 +1,14 @@
 {% if results %}
 {% set max_rel = results[0].relevance if results else 1 %}
 <p><strong>{{ results | length }}</strong> results{% if query %} for "{{ query }}"{% endif %}</p>
-<table>
+<table class="compact-table" style="table-layout:fixed;width:100%">
+    <colgroup>
+        <col style="width:25%">
+        <col style="width:12%">
+        <col style="width:10%">
+        <col style="width:40%">
+        <col style="width:13%">
+    </colgroup>
     <thead>
         <tr>
             <th>Filename</th>
@@ -14,10 +21,10 @@
     <tbody>
         {% for r in results %}
         <tr>
-            <td><a href="/cards/{{ quote(r.doc_id, safe='') }}">{{ r.filename }}</a></td>
+            <td class="filename-cell"><a href="/cards/{{ quote(r.doc_id, safe='') }}">{{ r.filename }}</a></td>
             <td>{{ r.project }}</td>
             <td>{% if r.type %}<span class="badge">{{ r.type }}</span>{% else %}-{% endif %}</td>
-            <td class="summary-cell">{{ r.summary[:80] if r.summary else '-' }}{% if r.summary and r.summary|length > 80 %}...{% endif %}</td>
+            <td class="summary-cell" title="{{ r.summary or '' }}">{{ r.summary[:160] if r.summary else '-' }}{% if r.summary and r.summary|length > 160 %}…{% endif %}</td>
             <td>{{ (r.relevance / max_rel * 100) | round(0) | int }}%</td>
         </tr>
         {% endfor %}

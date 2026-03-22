@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Astrolabe{% endblock %}</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔭</text></svg>">
     <link rel="stylesheet" href="/static/pico.min.css">
     <link rel="stylesheet" href="/static/app.css?v={{ version }}">
     <script src="/static/htmx.min.js"></script>
@@ -11,7 +12,7 @@
 <body>
     <header class="site-header">
         <div class="header-left">
-            <a href="/" class="header-brand"><strong>Astrolabe-MCP</strong> <small>v{{ version }}</small></a>
+            <a href="/" class="header-brand">🔭 <strong>Astrolabe-MCP</strong> <small>v{{ version }}</small></a>
             <a href="/" class="header-link">Dashboard</a>
             <a href="/cards" class="header-link">Cards</a>
             <form action="/search" method="get" class="header-search">

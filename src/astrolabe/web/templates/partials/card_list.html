@@ -1,4 +1,11 @@
-<table class="compact-table">
+<table class="compact-table" style="table-layout:fixed;width:100%">
+    <colgroup>
+        <col style="width:25%">
+        <col style="width:12%">
+        <col style="width:10%">
+        <col style="width:40%">
+        <col style="width:13%">
+    </colgroup>
     <thead>
         <tr>
             <th>Filename</th>
@@ -11,7 +18,7 @@
     <tbody>
         {% for card in cards %}
         <tr class="{% if card.is_empty %}empty-row{% elif card.is_stale %}stale-row{% endif %}">
-            <td>
+            <td class="filename-cell">
                 <a href="/cards/{{ quote(card.doc_id, safe='') }}">{{ card.filename }}</a>
                 {% if card.content_hash in hash_map %}<span class="dup-mark" title="Has copies">&#x2234;</span>{% endif %}
             </td>
@@ -19,7 +26,7 @@
                 {% if filter_project %}{{ card.project }}{% else %}<a href="/cards?project={{ quote(card.project) }}">{{ card.project }}</a>{% endif %}
             </td>
             <td class="type-cell">{% if card.type %}<span class="badge type-click" hx-get="/api/cards/{{ quote(card.doc_id, safe='') }}/type-edit" hx-target="closest .type-cell" hx-swap="innerHTML" title="Click to change type">{{ card.type }}</span>{% else %}<em class="type-click" hx-get="/api/cards/{{ quote(card.doc_id, safe='') }}/type-edit" hx-target="closest .type-cell" hx-swap="innerHTML" title="Click to set type">-</em>{% endif %}</td>
-            <td class="summary-cell">{{ card.summary[:80] if card.summary else '-' }}{% if card.summary and card.summary|length > 80 %}...{% endif %}</td>
+            <td class="summary-cell" title="{{ card.summary or '' }}">{{ card.summary[:160] if card.summary else '-' }}{% if card.summary and card.summary|length > 160 %}…{% endif %}</td>
             <td>
                 {% if state.is_desync(card) %}<mark class="desync-mark">desync</mark>
                 {% elif card.is_empty %}<span class="empty-mark">empty</span>
