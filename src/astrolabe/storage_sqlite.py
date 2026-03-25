@@ -101,6 +101,7 @@ class SqliteStorage:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=DELETE")
+        self._conn.execute("PRAGMA busy_timeout=3000")
         self._conn.executescript(_SCHEMA)
         # Migrate existing databases: add enriched_content_hash column
         with contextlib.suppress(sqlite3.OperationalError):

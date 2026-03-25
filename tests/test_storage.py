@@ -387,6 +387,51 @@ class TestSqliteSpecific:
         assert loaded_card.enriched_at is None
         assert loaded_card.enriched_content_hash is None
 
+    def test_busy_timeout_set(self, tmp_path: Path) -> None:
+        """SQLite connection has busy_timeout for multi-process safety."""
+        s = SqliteStorage(tmp_path / "index.db")
+        cursor = s._conn.execute("PRAGMA busy_timeout")
+        timeout = cursor.fetchone()[0]
+        assert timeout >= 3000
+
+    def test_concurrent_read_write(self, tmp_path: Path) -> None:
+        """save_card succeeds while another connection holds a brief read lock."""
+        import sqlite3
+        import threading
+        import time
+
+        db_path = tmp_path / "index.db"
+        s = SqliteStorage(db_path)
+        card = _make_card(enriched=True)
+        s.save(_make_index([card]))
+
+        barrier = threading.Barrier(2, timeout=5)
+
+        def reader() -> None:
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("PRAGMA journal_mode=DELETE")
+            # Hold SHARED lock briefly (simulates App reading)
+            conn.execute("BEGIN")
+            conn.execute("SELECT * FROM documents")
+            barrier.wait()  # signal: lock is held
+            time.sleep(0.1)  # hold for 100ms
+            conn.execute("ROLLBACK")
+            conn.close()
+
+        t = threading.Thread(target=reader)
+        t.start()
+        barrier.wait()  # wait until reader holds the lock
+
+        # Write while reader holds SHARED lock — busy_timeout retries until lock is free
+        new_card = _make_card("proj", "new.md")
+        s.save_card(new_card, datetime(2026, 1, 1, tzinfo=UTC))
+
+        t.join()
+
+        loaded = s.load()
+        assert loaded is not None
+        assert "proj::new.md" in loaded.documents
+
     def test_schema_migration_adds_enriched_content_hash(self, tmp_path: Path) -> None:
         """Opening a DB without enriched_content_hash column auto-migrates."""
         import sqlite3 as _sqlite3
