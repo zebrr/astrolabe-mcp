@@ -24,5 +24,9 @@
   "default_list_limit": 50,
   "_default_list_limit_note": "Max cards returned by list_docs per page. Agent can override per-call.",
   "default_search_limit": 20,
-  "_default_search_limit_note": "Max results returned by search_docs. Agent can override per-call."
+  "_default_search_limit_note": "Max results returned by search_docs. Agent can override per-call.",
+  "embeddings": false,
+  "_embeddings_note": "Enable ChromaDB semantic search via deep_search() tool. Requires: pip install astrolabe-mcp[embeddings]. Searches file content by meaning, works even without enrichment.",
+  "semantic_hint_threshold": 5,
+  "_semantic_hint_threshold_note": "When search_docs returns fewer results than this, hint suggests trying deep_search. Only shown when embeddings enabled."
 }

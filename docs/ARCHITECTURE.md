@@ -33,7 +33,10 @@ astrolabe-mcp/
 │   ├── config.py            # config loading
 │   ├── index.py             # FS scanning, index, stale detection
 │   ├── reader.py            # file reading, section extraction
-│   ├── search.py            # text search over enriched cards
+│   ├── search.py            # text search + hybrid stem/embedding search
+│   ├── chunker.py           # file content chunking for embeddings
+│   ├── embeddings.py        # EmbeddingBackend Protocol + factory
+│   ├── embeddings_chroma.py # ChromaDB implementation (optional)
 │   ├── storage.py           # StorageBackend Protocol + factory
 │   ├── storage_json.py      # JSON file storage backend
 │   ├── storage_sqlite.py    # SQLite storage backend
@@ -58,7 +61,10 @@ astrolabe-mcp/
 | config.py | done | spec_config.md | Load config.json + doc_types.yaml, resolve private_index_dir |
 | index.py | done | spec_index.md | Core: git-aware scan, build/load/save index, hash, stale detection |
 | reader.py | done | spec_reader.md | Read files: full, by section heading, by line range |
-| search.py | done | spec_search.md | Bilingual stem matching (EN+RU) with field weights over enriched cards |
+| search.py | done | spec_search.md | Bilingual stem matching (EN+RU) + hybrid stem/embedding search |
+| chunker.py | done | spec_chunker.md | File content chunking for embedding (paragraph-aware) |
+| embeddings.py | done | spec_embeddings.md | EmbeddingBackend Protocol + factory + availability check |
+| embeddings_chroma.py | done | spec_embeddings.md | ChromaDB implementation (optional, lazy init) |
 | storage.py | done | spec_storage.md | StorageBackend Protocol + create_storage() factory |
 | storage_json.py | done | spec_storage.md | JSON file backend (wraps index.py load/save) |
 | storage_sqlite.py | done | spec_storage.md | SQLite backend (single-row upserts, cloud-safe) |
@@ -71,13 +77,14 @@ astrolabe-mcp/
 models.py ← config.py ← index.py ← storage_json.py ← storage.py ← server.py
 models.py ← reader.py ←──────────────────────────────────────────────┘
 models.py ← search.py ←──────────────────────────────────────────────┘
+chunker.py ← embeddings.py ← embeddings_chroma.py ←──────────────────┘
 models.py ← storage_sqlite.py ← storage.py
                                                                       ← web/state.py ← web/app.py
 ```
 
-## MCP Tools (8)
+## MCP Tools (9)
 
-`get_doc_types`, `get_cosmos`, `list_docs`, `search_docs`, `get_card`, `read_doc`, `update_index`, `reindex`
+`get_doc_types`, `get_cosmos`, `list_docs`, `search_docs`, `deep_search`, `get_card`, `read_doc`, `update_index`, `reindex`
 
 See `docs/CONCEPT.md` for full tool specifications.
 
@@ -100,3 +107,4 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Output optimization (v0.7.0): `list_docs`/`search_docs` return envelope `{total, limit/max_results, result, hint?}` with pagination and adaptive agent hints. Timestamps stripped from list/search output (kept in `get_card`). Defaults in AppConfig (`default_list_limit=50`, `default_search_limit=20`)
 - Content deduplication (v0.7.2): documents with identical `content_hash` across projects are detected on-the-fly via `build_hash_map()`. `search_docs` collapses duplicates (first by relevance wins). `list_docs` marks copies with `has_copies: true`. `get_card` lists all copies in `copies: [doc_id, ...]`. No storage changes — computed at query time.
 - Web UI (v0.8.0): Local browser interface via FastAPI + Jinja2 + HTMX. Separate process from MCP server, shared storage. Optional `[web]` dependencies. Launch: `.venv/bin/python -m astrolabe.web`. AppState class extracts server.py's global state pattern into a proper class. Card inline editing, markdown doc reader, live search, reindex actions.
+- Semantic search (v0.9.0): Optional ChromaDB-based `deep_search` tool for semantic search over file content. Enabled with `"embeddings": true` in config, requires `pip install astrolabe-mcp[embeddings]`. Files chunked and embedded at reindex time — works even without enrichment. Separate from `search_docs` (fast stem matching) — `deep_search` is on-demand for when keyword search finds too few results. Cross-hints between tools guide the agent. ChromaDB data in `.chromadb/` alongside index files (shared and private). Lazy init — model loaded on first deep_search call.

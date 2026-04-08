@@ -26,6 +26,10 @@ class AppConfig(BaseModel):
     private_projects: dict[str, Path] = {}
     private_index_dir: Path | None = None
 
+    # Embeddings (optional, disabled by default)
+    embeddings: bool = False
+    semantic_hint_threshold: int = 5
+
     @model_validator(mode="after")
     def _validate_private(self) -> "AppConfig":
         if self.private_projects and self.private_index_dir is None:
@@ -122,6 +126,8 @@ class CosmosResponse(BaseModel):
     stale_documents: int
     empty_documents: int
     desync_documents: int = 0
+    embeddings_enabled: bool = False
+    embedded_chunks: int = 0
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 

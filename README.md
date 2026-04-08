@@ -26,6 +26,7 @@ Astrolabe is a **dumb server + smart agent** architecture. The server only walks
 - **Managed typing** — fixed set of document types with `undef` as a catch-all
 - **Binary-safe** — media and office files are indexed by metadata and filename
 - **Zero-intrusion** — no frontmatter, no changes to your project files
+- **Semantic search** — optional `deep_search` via ChromaDB embeddings, finds documents by meaning even without enrichment
 - **Web UI** — local browser interface for browsing, searching, and editing index cards with markdown rendering
 
 ## Quick Start
@@ -37,8 +38,19 @@ python3 -m venv .venv
 source .venv/bin/activate   # macOS/Linux
 # .venv\Scripts\activate    # Windows
 pip install -e .
-pip install -e ".[web]"   # optional: local web UI
 ```
+
+**Optional features** (install any combination):
+
+| Command | What it adds |
+|---------|-------------|
+| `pip install -e ".[web]"` | Local web UI (FastAPI + Jinja2 + HTMX) |
+| `pip install -e ".[embeddings]"` | Semantic search via ChromaDB (`deep_search` tool) |
+| `pip install -e ".[dev]"` | Dev tools (ruff, mypy, pytest) |
+| `pip install -e ".[web,embeddings]"` | All optional features |
+| `pip install -e ".[dev,web,embeddings]"` | Everything |
+
+`pip install -e .` installs only the base: MCP server with keyword search, enrichment, and all core tools. Optional groups add features without breaking the base.
 
 Copy and edit the config files:
 
@@ -158,6 +170,7 @@ It should return your project list and index statistics.
 models.py ← config.py ← index.py ← server.py
 models.py ← reader.py ←──────────────┘
 models.py ← search.py ←──────────────┘
+chunker.py ← embeddings.py ←─────────┘  (optional)
                                       ← web/state.py ← web/app.py
 ```
 
@@ -208,6 +221,16 @@ An included enrichment skill (`enrich-index`) automates batch enrichment — it 
 
 Each query token and each word in a field are stemmed with both EN and RU Snowball stemmers. A token matches a word if their stem sets intersect — so "running" finds "run", and "документы" finds "документ". Filenames are split on `_`, `-`, `.` before matching. Results are sorted by relevance score.
 
+### Semantic Search (optional)
+
+`deep_search(query)` performs semantic search over actual file content using ChromaDB embeddings. Unlike `search_docs` which matches keywords on enriched cards, `deep_search` finds documents by meaning — even unenriched ones.
+
+**When to use:** when `search_docs` returns too few results, or when searching for a concept rather than an exact term. The agent is guided automatically — `search_docs` hints at `deep_search` when results are sparse.
+
+**Setup:** add `"embeddings": true` to `config.json` and install with `pip install -e ".[embeddings]"`. Run `reindex_tool()` to embed all files (one-time, takes ~1-2 minutes for 1500 documents). After that, `deep_search` is available as a separate MCP tool.
+
+**How it works:** files are split into ~800-character chunks and embedded using ChromaDB's built-in model (all-MiniLM-L6-v2, ~80MB, runs locally, no API keys). On query, `deep_search` combines semantic similarity with stem matching for hybrid scoring.
+
 ## MCP Tools
 
 | Tool | Description |
@@ -215,7 +238,8 @@ Each query token and each word in a field are stemmed with both EN and RU Snowba
 | `get_doc_types()` | Document type vocabulary from doc_types.yaml (descriptions + examples) |
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
 | `list_docs(project?, type?, stale?, desync?, limit?, offset?)` | List document cards with filters and pagination |
-| `search_docs(query, project?, type?, max_results?)` | Search by query with relevance ranking |
+| `search_docs(query, project?, type?, max_results?)` | Fast keyword search with relevance ranking |
+| `deep_search(query, project?, max_results?)` | Semantic search over file content (requires `embeddings: true`) |
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
 | `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card (type validated against doc_types.yaml) |
@@ -296,13 +320,14 @@ The web server runs as a separate process and shares the storage backend with th
 - **Binary files** — PDF, Office documents are indexed by filename only (no content extraction yet)
 - **Media files** — images, audio, video indexed by filename only
 - **No code parsing** — `.py`/`.sh` files are read as plain text, no AST analysis
-- **No semantic search** — stem matching only, no embeddings (planned)
+- **Semantic search model** — fixed to all-MiniLM-L6-v2, no model choice yet
+- **Semantic search sync** — ChromaDB `.chromadb/` directory may not sync reliably via cloud drives; treat embeddings as local per machine
 - **No file writing** — index card editing via Web UI, but no document content editing via MCP
 - **Single index file** — JSON uses filelock, SQLite uses its own locking; not designed for high-throughput multi-client scenarios
 
 ## Contributing
 
-Fork, install with `pip install -e ".[dev,web]"`, run `ruff check src/ tests/ && mypy src/ && pytest -v` before submitting.
+Fork, install with `pip install -e ".[dev,web,embeddings]"`, run `ruff check src/ tests/ && mypy src/ && pytest -v` before submitting.
 
 ## License
 

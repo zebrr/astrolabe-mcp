@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from astrolabe.chunker import chunk_file
 from astrolabe.config import load_config, load_doc_types_full
+from astrolabe.embeddings import (
+    EmbeddingBackend,
+    EmbeddingResult,
+    is_embeddings_available,
+)
 from astrolabe.index import build_hash_map, build_index, reindex, update_card
 from astrolabe.models import (
     AppConfig,
@@ -17,7 +23,7 @@ from astrolabe.models import (
     TypeSummary,
 )
 from astrolabe.reader import read_file
-from astrolabe.search import search
+from astrolabe.search import hybrid_search, search
 from astrolabe.storage import StorageBackend, create_storage, create_storage_at
 
 logger = logging.getLogger(__name__)
@@ -34,6 +40,8 @@ class AppState:
         storage: StorageBackend,
         private_storage: StorageBackend | None,
         doc_types_full: dict[str, dict[str, Any]],
+        embedding_backend: EmbeddingBackend | None = None,
+        private_embedding_backend: EmbeddingBackend | None = None,
     ) -> None:
         self.config = config
         self.config_path = config_path
@@ -44,6 +52,8 @@ class AppState:
         self.doc_types: dict[str, str] = {
             name: entry["description"] for name, entry in doc_types_full.items()
         }
+        self.embedding_backend = embedding_backend
+        self.private_embedding_backend = private_embedding_backend
 
     @classmethod
     def from_config_path(cls, config_path: Path) -> "AppState":
@@ -87,6 +97,18 @@ class AppState:
             index = build_index(scan_config)
             logger.info("Built fresh index: %d documents", len(index.documents))
 
+        # Create embedding backends if configured
+        embedding_backend: EmbeddingBackend | None = None
+        private_embedding_backend: EmbeddingBackend | None = None
+        if config.embeddings and is_embeddings_available():
+            from astrolabe.embeddings import create_embedding_backend
+
+            embedding_backend = create_embedding_backend(config.index_dir)
+            if config.private_index_dir is not None:
+                private_embedding_backend = create_embedding_backend(
+                    config.private_index_dir, collection_name="astrolabe_private"
+                )
+
         state = cls(
             config=config,
             config_path=config_path,
@@ -94,6 +116,8 @@ class AppState:
             storage=storage,
             private_storage=private_storage,
             doc_types_full=doc_types_full,
+            embedding_backend=embedding_backend,
+            private_embedding_backend=private_embedding_backend,
         )
         state._save_index()
         return state
@@ -149,6 +173,70 @@ class AppState:
         if self.private_storage is not None and self.config.is_private(project):
             return self.private_storage
         return self.storage
+
+    def _get_embedding_backend_for_project(self, project: str) -> EmbeddingBackend | None:
+        """Return the correct embedding backend for a project."""
+        if self.private_embedding_backend is not None and self.config.is_private(project):
+            return self.private_embedding_backend
+        return self.embedding_backend
+
+    def _sync_embeddings(self, stats: Any, mode: str) -> None:
+        """Sync embeddings after reindex."""
+        if self.embedding_backend is None and self.private_embedding_backend is None:
+            return
+
+        from astrolabe.index import ReindexStats
+
+        if not isinstance(stats, ReindexStats):
+            return
+
+        doc_ids_to_embed = stats._new_doc_ids | stats._stale_doc_ids
+
+        # Detect first-time enablement: ChromaDB empty but documents exist
+        total_chunks = 0
+        if self.embedding_backend is not None:
+            total_chunks += self.embedding_backend.count
+        if self.private_embedding_backend is not None:
+            total_chunks += self.private_embedding_backend.count
+        if total_chunks == 0 and self.index.documents:
+            doc_ids_to_embed = set(self.index.documents.keys())
+
+        if mode == "rebuild":
+            if self.embedding_backend is not None:
+                self.embedding_backend.clear()
+            if self.private_embedding_backend is not None:
+                self.private_embedding_backend.clear()
+            doc_ids_to_embed = set(self.index.documents.keys())
+
+        for doc_id in doc_ids_to_embed:
+            card = self.index.documents.get(doc_id)
+            if card is None:
+                continue
+            backend = self._get_embedding_backend_for_project(card.project)
+            if backend is None:
+                continue
+            project_path = self.config.all_projects.get(card.project)
+            if project_path is None:
+                continue
+            file_path = project_path / card.rel_path
+            if not file_path.exists():
+                continue
+            chunks = chunk_file(file_path, max_file_size_kb=self.config.max_file_size_kb)
+            if not chunks:
+                stats.embedding_errors += 1
+                continue
+            backend.upsert_document(
+                doc_id,
+                chunks,
+                {"doc_id": doc_id, "project": card.project, "content_hash": card.content_hash},
+            )
+            stats.embedded += 1
+
+        for doc_id in stats._removed_doc_ids:
+            project = doc_id.split("::")[0] if "::" in doc_id else ""
+            backend = self._get_embedding_backend_for_project(project)
+            if backend is not None:
+                backend.remove_document(doc_id)
 
     def is_desync(self, card: DocCard) -> bool:
         """Check if card's file is missing on disk."""
@@ -220,9 +308,10 @@ class AppState:
             self.index, stats = reindex(_full_scan_config(config), self.index, mode=reindex_mode)
 
         self._save_index()
+        self._sync_embeddings(stats, reindex_mode)
         duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 
-        return {
+        result: dict[str, Any] = {
             "scanned": stats.scanned,
             "new": stats.new,
             "removed": stats.removed,
@@ -232,6 +321,11 @@ class AppState:
             "desync": stats.desync,
             "duration_ms": duration_ms,
         }
+        if stats.embedded > 0:
+            result["embedded"] = stats.embedded
+        if stats.embedding_errors > 0:
+            result["embedding_errors"] = stats.embedding_errors
+        return result
 
     def get_cosmos(self) -> CosmosResponse:
         """Build cosmos overview response."""
@@ -299,6 +393,13 @@ class AppState:
             for t, c in sorted(type_counts.items())
         ]
 
+        embeddings_enabled = self.embedding_backend is not None
+        embedded_chunks = 0
+        if self.embedding_backend is not None:
+            embedded_chunks += self.embedding_backend.count
+        if self.private_embedding_backend is not None:
+            embedded_chunks += self.private_embedding_backend.count
+
         return CosmosResponse(
             server_version=__version__,
             indexed_at=index.indexed_at,
@@ -307,6 +408,8 @@ class AppState:
             stale_documents=stale,
             empty_documents=empty,
             desync_documents=desync_count,
+            embeddings_enabled=embeddings_enabled,
+            embedded_chunks=embedded_chunks,
             projects=projects,
             document_types=document_types,
         )
@@ -341,6 +444,22 @@ class AppState:
         page = filtered[offset : offset + limit]
         return page, total
 
+    def _dedup_results(self, results: list[Any]) -> list[Any]:
+        """Deduplicate search results by content_hash."""
+        hash_map = build_hash_map(self.index.documents)
+        if not hash_map:
+            return results
+        seen: set[str] = set()
+        deduped = []
+        for r in results:
+            card = self.index.documents.get(r.doc_id)
+            if card and card.content_hash in hash_map:
+                if card.content_hash in seen:
+                    continue
+                seen.add(card.content_hash)
+            deduped.append(r)
+        return deduped
+
     def search_cards(
         self,
         query: str,
@@ -349,7 +468,7 @@ class AppState:
         type: str | None = None,
         max_results: int = 20,
     ) -> list[Any]:
-        """Search cards by query. Returns SearchResult list."""
+        """Search cards by query (fast keyword matching). Returns SearchResult list."""
         type_boosts = {
             name: entry.get("search_boost", 1.0)
             for name, entry in self.doc_types_full.items()
@@ -362,21 +481,37 @@ class AppState:
             type=type,
             type_boosts=type_boosts,
         )
+        results = self._dedup_results(results)
+        return results[:max_results]
 
-        # Dedup by content_hash
-        hash_map = build_hash_map(self.index.documents)
-        if hash_map:
-            seen: set[str] = set()
-            deduped = []
-            for r in results:
-                card = self.index.documents.get(r.doc_id)
-                if card and card.content_hash in hash_map:
-                    if card.content_hash in seen:
-                        continue
-                    seen.add(card.content_hash)
-                deduped.append(r)
-            results = deduped
+    def deep_search_cards(
+        self,
+        query: str,
+        *,
+        project: str | None = None,
+        max_results: int = 20,
+    ) -> list[Any]:
+        """Semantic search over file content. Returns SearchResult list."""
+        if self.embedding_backend is None:
+            return []
 
+        n_chunks = max(30, max_results * 2)
+        embedding_results: list[EmbeddingResult] = self.embedding_backend.query(
+            query, n_results=n_chunks, project=project
+        )
+        if self.private_embedding_backend is not None:
+            private_results = self.private_embedding_backend.query(
+                query, n_results=n_chunks, project=project
+            )
+            embedding_results.extend(private_results)
+
+        results = hybrid_search(
+            self.index.documents.values(),
+            query,
+            embedding_results,
+            project=project,
+        )
+        results = self._dedup_results(results)
         return results[:max_results]
 
     def read_document(
@@ -431,4 +566,5 @@ def _full_scan_config(config: AppConfig) -> AppConfig:
         ignore_dirs=config.ignore_dirs,
         ignore_files=config.ignore_files,
         max_file_size_kb=config.max_file_size_kb,
+        embeddings=config.embeddings,
     )

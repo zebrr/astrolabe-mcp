@@ -31,8 +31,14 @@ class ReindexStats:
     unchanged: int = 0
     passthrough: int = 0
     desync: int = 0
+    embedded: int = 0
+    embedding_errors: int = 0
     auto_transferred: list[tuple[str, str]] = field(default_factory=list)
     ambiguous_moves: list[dict[str, object]] = field(default_factory=list)
+    # Internal tracking for embedding sync (not serialized in tool output)
+    _new_doc_ids: set[str] = field(default_factory=set)
+    _stale_doc_ids: set[str] = field(default_factory=set)
+    _removed_doc_ids: set[str] = field(default_factory=set)
 
 
 def _compute_hash(file_path: Path) -> str:
@@ -214,6 +220,7 @@ def reindex(
 
     if existing is None:
         stats.new = len(fresh_cards)
+        stats._new_doc_ids = set(fresh_cards.keys())
         return IndexData(indexed_at=datetime.now(UTC), documents=fresh_cards), stats
 
     new_documents: dict[str, DocCard] = {}
@@ -223,10 +230,12 @@ def reindex(
         if doc_id not in existing.documents:
             new_documents[doc_id] = fresh_card
             stats.new += 1
+            stats._new_doc_ids.add(doc_id)
         elif mode == "rebuild":
             # Rebuild: use fresh card without enrichment
             new_documents[doc_id] = fresh_card
             stats.new += 1
+            stats._new_doc_ids.add(doc_id)
         else:
             old_card = existing.documents[doc_id]
             if old_card.content_hash != fresh_card.content_hash:
@@ -239,6 +248,7 @@ def reindex(
                 fresh_card.enriched_content_hash = old_card.enriched_content_hash
                 new_documents[doc_id] = fresh_card
                 stats.stale += 1
+                stats._stale_doc_ids.add(doc_id)
             else:
                 # Unchanged — migrate enriched cards missing enriched_content_hash
                 if old_card.enriched_at is not None and old_card.enriched_content_hash is None:
@@ -257,6 +267,7 @@ def reindex(
         elif mode in ("clean", "rebuild"):
             # Clean/rebuild: remove desync cards for configured projects
             stats.removed += 1
+            stats._removed_doc_ids.add(doc_id)
         else:
             # Desync: file missing but project is configured, preserve card
             new_documents[doc_id] = card

@@ -53,6 +53,8 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
     srv._private_storage = None
     srv._doc_types = {}
     srv._doc_types_full = {}
+    srv._embedding_backend = None
+    srv._private_embedding_backend = None
 
     # Initialize
     srv._init()
@@ -762,3 +764,32 @@ class TestContentDedup:
         """get_card omits copies for unique documents."""
         result = srv.get_card(doc_id="proj-b::unique.md")
         assert "copies" not in result
+
+
+class TestDeepSearch:
+    """Tests for deep_search tool."""
+
+    def test_disabled_returns_error(self, server_env: AppConfig) -> None:
+        """deep_search returns error when embeddings not enabled."""
+        result = srv.deep_search(query="test")
+        assert "error" in result
+        assert "not enabled" in result["error"]
+        assert "hint" in result
+
+    def test_search_docs_no_embed_hint_when_disabled(self, server_env: AppConfig) -> None:
+        """search_docs does not hint at deep_search when embeddings disabled."""
+        result = srv.search_docs(query="nonexistent_term_xyz")
+        if "hint" in result:
+            assert "deep_search" not in result["hint"]
+
+    def test_search_docs_still_fast(self, server_env: AppConfig) -> None:
+        """search_docs returns results without embedding overhead."""
+        srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="reference",
+            summary="Project readme",
+            keywords=["readme", "setup"],
+        )
+        result = srv.search_docs(query="readme")
+        assert result["total"] >= 1
+        assert result["result"][0]["doc_id"] == "test-project::README.md"

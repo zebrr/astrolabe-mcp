@@ -159,14 +159,14 @@ async def type_edit(request: Request, doc_id: str) -> Any:
     size = min(len(state.doc_types) + 1, 10)
     select_html = (
         f'<select class="inline-type-select" size="{size}" autofocus '
-        f'onchange="htmx.ajax(\'POST\', \'{save_url}\', '
-        f'{{target:this.closest(\'.type-cell\'), swap:\'innerHTML\', '
+        f"onchange=\"htmx.ajax('POST', '{save_url}', "
+        f"{{target:this.closest('.type-cell'), swap:'innerHTML', "
         f'values:{{type:this.value}}}})" '
         f'onblur="var s=this; setTimeout(function(){{ if(s.parentNode) '
         f"htmx.ajax('GET', '{badge_url}', "
-        f'{{target:s.closest(\'.type-cell\'), swap:\'innerHTML\'}})}}, 150)" '
-        f'onkeydown="if(event.key===\'Escape\') this.blur()" '
-        f'>{"".join(options)}</select>'
+        f"{{target:s.closest('.type-cell'), swap:'innerHTML'}})}}, 150)\" "
+        f"onkeydown=\"if(event.key==='Escape') this.blur()\" "
+        f">{''.join(options)}</select>"
     )
     return HTMLResponse(select_html)
 
@@ -188,7 +188,7 @@ async def type_save(request: Request, doc_id: str, type: str = Form("")) -> Any:
     card_type = type.strip() or None
 
     if card_type and state.doc_types and card_type not in state.doc_types:
-        return HTMLResponse('<em>invalid</em>')
+        return HTMLResponse("<em>invalid</em>")
 
     try:
         card = state.do_update_card(doc_id, type=card_type)

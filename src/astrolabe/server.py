@@ -9,8 +9,10 @@ from typing import Any, Literal, cast
 from mcp.server.fastmcp import FastMCP
 
 from astrolabe import __version__
+from astrolabe.chunker import chunk_file
 from astrolabe.config import load_config, load_doc_types_full
-from astrolabe.index import build_hash_map, build_index, reindex, update_card
+from astrolabe.embeddings import EmbeddingBackend, EmbeddingResult, is_embeddings_available
+from astrolabe.index import ReindexStats, build_hash_map, build_index, reindex, update_card
 from astrolabe.models import (
     AppConfig,
     CosmosResponse,
@@ -20,7 +22,7 @@ from astrolabe.models import (
     TypeSummary,
 )
 from astrolabe.reader import read_file
-from astrolabe.search import search
+from astrolabe.search import hybrid_search, search
 from astrolabe.storage import StorageBackend, create_storage, create_storage_at
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,8 @@ _storage: StorageBackend | None = None
 _private_storage: StorageBackend | None = None
 _doc_types_full: dict[str, dict[str, Any]] = {}
 _doc_types: dict[str, str] = {}
+_embedding_backend: EmbeddingBackend | None = None
+_private_embedding_backend: EmbeddingBackend | None = None
 
 
 def _load_all_doc_types(config: AppConfig, config_path: Path) -> None:
@@ -64,6 +68,7 @@ def _full_scan_config(config: AppConfig) -> AppConfig:
         ignore_dirs=config.ignore_dirs,
         ignore_files=config.ignore_files,
         max_file_size_kb=config.max_file_size_kb,
+        embeddings=config.embeddings,
     )
 
 
@@ -91,6 +96,112 @@ def _save_index() -> None:
 
     _storage.save(shared_index)
     _private_storage.save(private_index)
+
+
+def _init_embeddings(config: AppConfig) -> None:
+    """Initialize embedding backends if embeddings are enabled."""
+    global _embedding_backend, _private_embedding_backend
+
+    _embedding_backend = None
+    _private_embedding_backend = None
+
+    if not config.embeddings:
+        return
+
+    if not is_embeddings_available():
+        logger.warning(
+            "embeddings=true in config but chromadb is not installed. "
+            "Install with: pip install astrolabe-mcp[embeddings]. "
+            "Falling back to stem-only search."
+        )
+        return
+
+    from astrolabe.embeddings import create_embedding_backend
+
+    _embedding_backend = create_embedding_backend(config.index_dir)
+    logger.info("Shared embedding backend created at %s", config.index_dir)
+
+    if config.private_index_dir is not None:
+        _private_embedding_backend = create_embedding_backend(
+            config.private_index_dir, collection_name="astrolabe_private"
+        )
+        logger.info("Private embedding backend created at %s", config.private_index_dir)
+
+
+def _get_embedding_backend_for_project(project: str) -> EmbeddingBackend | None:
+    """Return the correct embedding backend for a project."""
+    assert _config is not None
+    if _private_embedding_backend is not None and _config.is_private(project):
+        return _private_embedding_backend
+    return _embedding_backend
+
+
+def _sync_embeddings(
+    index: IndexData,
+    stats: "ReindexStats",
+    config: AppConfig,
+    mode: str,
+) -> None:
+    """Sync embeddings after reindex: embed new/stale docs, remove deleted."""
+    if _embedding_backend is None and _private_embedding_backend is None:
+        return
+
+    doc_ids_to_embed = stats._new_doc_ids | stats._stale_doc_ids
+
+    # Detect first-time enablement: ChromaDB empty but documents exist
+    total_chunks = 0
+    if _embedding_backend is not None:
+        total_chunks += _embedding_backend.count
+    if _private_embedding_backend is not None:
+        total_chunks += _private_embedding_backend.count
+    if total_chunks == 0 and index.documents:
+        logger.info("Embeddings first run: embedding all %d documents", len(index.documents))
+        doc_ids_to_embed = set(index.documents.keys())
+
+    if mode == "rebuild":
+        # Clear all embeddings and re-embed everything
+        if _embedding_backend is not None:
+            _embedding_backend.clear()
+        if _private_embedding_backend is not None:
+            _private_embedding_backend.clear()
+        doc_ids_to_embed = set(index.documents.keys())
+
+    for doc_id in doc_ids_to_embed:
+        card = index.documents.get(doc_id)
+        if card is None:
+            continue
+
+        backend = _get_embedding_backend_for_project(card.project)
+        if backend is None:
+            continue
+
+        project_path = config.all_projects.get(card.project)
+        if project_path is None:
+            continue
+
+        file_path = project_path / card.rel_path
+        if not file_path.exists():
+            continue
+
+        chunks = chunk_file(file_path, max_file_size_kb=config.max_file_size_kb)
+        if not chunks:
+            stats.embedding_errors += 1
+            continue
+
+        backend.upsert_document(
+            doc_id,
+            chunks,
+            {"doc_id": doc_id, "project": card.project, "content_hash": card.content_hash},
+        )
+        stats.embedded += 1
+
+    # Remove embeddings for removed documents
+    for doc_id in stats._removed_doc_ids:
+        # Determine project from doc_id prefix
+        project = doc_id.split("::")[0] if "::" in doc_id else ""
+        backend = _get_embedding_backend_for_project(project)
+        if backend is not None:
+            backend.remove_document(doc_id)
 
 
 def _get_storage_for_project(project: str) -> StorageBackend:
@@ -121,6 +232,9 @@ def _init() -> tuple[AppConfig, IndexData]:
     else:
         _private_storage = None
 
+    # Create embedding backends if configured
+    _init_embeddings(_config)
+
     # Load and merge indexes from both storages
     shared_data = _storage.load()
     private_data = _private_storage.load() if _private_storage is not None else None
@@ -139,11 +253,14 @@ def _init() -> tuple[AppConfig, IndexData]:
         existing = IndexData(indexed_at=indexed_at, documents=existing_docs)
         _index, stats = reindex(scan_config, existing)
         logger.info("Reindex on startup: %s", stats)
+        _save_index()
+        # Note: embeddings sync deferred to first reindex_tool() or deep_search() call
+        # to avoid slow ChromaDB loading at startup
     else:
         _index = build_index(scan_config)
         logger.info("Built fresh index: %d documents", len(_index.documents))
+        _save_index()
 
-    _save_index()
     return _config, _index
 
 
@@ -251,6 +368,14 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
         for t, c in sorted(type_counts.items())
     ]
 
+    # Embedding stats
+    embeddings_enabled = _embedding_backend is not None
+    embedded_chunks = 0
+    if _embedding_backend is not None:
+        embedded_chunks += _embedding_backend.count
+    if _private_embedding_backend is not None:
+        embedded_chunks += _private_embedding_backend.count
+
     resp = CosmosResponse(
         server_version=__version__,
         indexed_at=index.indexed_at,
@@ -259,6 +384,8 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
         stale_documents=stale,
         empty_documents=empty,
         desync_documents=desync,
+        embeddings_enabled=embeddings_enabled,
+        embedded_chunks=embedded_chunks,
         projects=projects,
         document_types=document_types,
     )
@@ -406,6 +533,7 @@ def search_docs(
         for name, entry in _doc_types_full.items()
         if "search_boost" in entry
     }
+
     results = search(
         index.documents.values(), query, project=project, type=type, type_boosts=type_boosts
     )
@@ -456,6 +584,109 @@ def search_docs(
         suggestions.append("more specific query")
         hint_parts.append(f"Try: {', '.join(suggestions)} to narrow results.")
         envelope["hint"] = " ".join(hint_parts)
+    elif total < config.semantic_hint_threshold and _embedding_backend is not None:
+        envelope["hint"] = (
+            f"Only {total} keyword matches. "
+            "Try deep_search(query) for semantic search over file content."
+        )
+
+    return envelope
+
+
+@mcp.tool()
+def deep_search(
+    query: str,
+    project: str | None = None,
+    max_results: int | None = None,
+) -> dict:  # type: ignore[type-arg]
+    """Semantic search over file content using embeddings. Slower but finds by meaning.
+
+    Use when search_docs() returns too few results or when searching for concepts
+    rather than exact terms. Requires embeddings=true in config.
+
+    Unlike search_docs (fast keyword matching on enriched cards), this tool searches
+    actual file content semantically — works even for unenriched documents.
+
+    Args:
+        query: Search query — works best with descriptive phrases.
+        project: Filter by project ID.
+        max_results: Max results to return. Default from config (~20).
+    """
+    config, index = _get_state()
+    effective_max = max_results if max_results is not None else config.default_search_limit
+
+    if _embedding_backend is None:
+        if not config.embeddings:
+            return {
+                "error": "Semantic search is not enabled",
+                "hint": (
+                    'Set "embeddings": true in config.json '
+                    "and install: pip install astrolabe-mcp[embeddings]"
+                ),
+            }
+        return {
+            "error": "chromadb is not installed",
+            "hint": "Install with: pip install astrolabe-mcp[embeddings]",
+        }
+
+    # Query both embedding backends
+    n_chunks = max(30, effective_max * 2)
+    embedding_results: list[EmbeddingResult] = _embedding_backend.query(
+        query, n_results=n_chunks, project=project
+    )
+    if _private_embedding_backend is not None:
+        private_results = _private_embedding_backend.query(
+            query, n_results=n_chunks, project=project
+        )
+        embedding_results.extend(private_results)
+
+    # Use hybrid_search with embedding results (stem + embed combined)
+    results = hybrid_search(
+        index.documents.values(),
+        query,
+        embedding_results,
+        project=project,
+    )
+
+    # Dedup by content_hash
+    hash_map = build_hash_map(index.documents)
+    if hash_map:
+        seen_hashes: set[str] = set()
+        deduped = []
+        for r in results:
+            card = index.documents.get(r.doc_id)
+            if card and card.content_hash in hash_map:
+                if card.content_hash in seen_hashes:
+                    continue
+                seen_hashes.add(card.content_hash)
+            deduped.append(r)
+        results = deduped
+
+    total = len(results)
+    page = results[:effective_max]
+
+    result = [
+        {
+            "doc_id": r.doc_id,
+            "project": r.project,
+            "type": r.type,
+            "filename": r.filename,
+            "summary": r.summary,
+            "keywords": r.keywords,
+            "relevance": r.relevance,
+        }
+        for r in page
+    ]
+
+    envelope: dict[str, object] = {
+        "total": total,
+        "max_results": effective_max,
+        "result": result,
+        "hint": (
+            "Semantic search results (by meaning, not exact words). "
+            "For exact keyword matching use search_docs(query)."
+        ),
+    }
 
     return envelope
 
@@ -720,6 +951,12 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
 
     _save_index()
 
+    # Reinitialize embedding backends (config may have changed)
+    _init_embeddings(config)
+
+    # Sync embeddings for new/stale/removed documents
+    _sync_embeddings(_index, stats, config, mode=reindex_mode)
+
     duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 
     result: dict[str, object] = {
@@ -732,6 +969,10 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         "desync": stats.desync,
         "duration_ms": duration_ms,
     }
+    if stats.embedded > 0:
+        result["embedded"] = stats.embedded
+    if stats.embedding_errors > 0:
+        result["embedding_errors"] = stats.embedding_errors
     if stats.auto_transferred:
         result["auto_transferred"] = [
             {"from": old_id, "to": new_id} for old_id, new_id in stats.auto_transferred
