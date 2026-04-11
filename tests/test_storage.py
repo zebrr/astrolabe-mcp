@@ -1,5 +1,6 @@
 """Tests for storage backends (JsonStorage and SqliteStorage)."""
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -347,6 +348,167 @@ class TestCreateStorageAt:
         assert "proj_a::a.md" in loaded_a.documents
         assert "proj_b::b.md" in loaded_b.documents
         assert "proj_b::b.md" not in loaded_a.documents
+
+
+class TestSqliteRetry:
+    """Retry logic for transient SQLite errors (cloud drive sync)."""
+
+    def test_retry_write_succeeds_after_transient_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_retry_write retries and succeeds when transient error resolves."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+        call_count = 0
+
+        def flaky_fn() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise sqlite3.OperationalError("attempt to write a readonly database")
+
+        s._retry_write(flaky_fn)
+        assert call_count == 3  # failed twice, succeeded on third
+
+    def test_retry_write_raises_after_max_retries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_retry_write raises after exhausting all retries."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+
+        def always_fail() -> None:
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            s._retry_write(always_fail)
+
+    def test_retry_write_no_retry_on_non_transient(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-transient OperationalError is raised immediately, no retry."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+        call_count = 0
+
+        def non_transient() -> None:
+            nonlocal call_count
+            call_count += 1
+            raise sqlite3.OperationalError("no such table: documents")
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            s._retry_write(non_transient)
+        assert call_count == 1
+
+    def test_retry_write_handles_locked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """'database is locked' is recognized as transient."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+        call_count = 0
+
+        def locked_then_ok() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("database is locked")
+
+        s._retry_write(locked_then_ok)
+        assert call_count == 2
+
+    def test_retry_write_handles_busy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """'database is busy' is recognized as transient."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+        call_count = 0
+
+        def busy_then_ok() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("database table is busy")
+
+        s._retry_write(busy_then_ok)
+        assert call_count == 2
+
+    def test_retry_logs_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Transient errors are logged as warnings during retry."""
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.0)
+
+        s = SqliteStorage(tmp_path / "index.db")
+        call_count = 0
+
+        def flaky_once() -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise sqlite3.OperationalError("attempt to write a readonly database")
+
+        with caplog.at_level("WARNING"):
+            s._retry_write(flaky_once)
+
+        assert "Transient SQLite error" in caplog.text
+        assert "readonly" in caplog.text
+
+    def test_save_with_readonly_db_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Integration: save() handles OS-level readonly file via retry."""
+        import os
+        import threading
+
+        import astrolabe.storage_sqlite as mod
+
+        monkeypatch.setattr(mod, "WRITE_RETRY_DELAY_S", 0.3)
+
+        db_path = tmp_path / "index.db"
+        s = SqliteStorage(db_path)
+        s.save(_make_index([_make_card("proj", "a.md")]))
+
+        # Make file readonly (simulates Google Drive sync)
+        os.chmod(db_path, 0o444)
+
+        # Restore permissions after a short delay (simulates sync finishing)
+        def restore() -> None:
+            import time
+
+            time.sleep(0.15)
+            os.chmod(db_path, 0o644)
+
+        t = threading.Thread(target=restore)
+        t.start()
+
+        # This should fail on first attempt, succeed after restore
+        new_index = _make_index([_make_card("proj", "b.md")])
+        s.save(new_index)
+
+        t.join()
+
+        loaded = s.load()
+        assert loaded is not None
+        assert "proj::b.md" in loaded.documents
 
 
 class TestSqliteSpecific:

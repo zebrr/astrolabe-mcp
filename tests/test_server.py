@@ -54,7 +54,6 @@ def server_env(tmp_path: Path, fake_project: Path, monkeypatch: pytest.MonkeyPat
     srv._doc_types = {}
     srv._doc_types_full = {}
     srv._embedding_backend = None
-    srv._private_embedding_backend = None
 
     # Initialize
     srv._init()

@@ -28,6 +28,7 @@ class AppConfig(BaseModel):
 
     # Embeddings (optional, disabled by default)
     embeddings: bool = False
+    embeddings_dir: Path | None = None
     semantic_hint_threshold: int = 5
 
     @model_validator(mode="after")

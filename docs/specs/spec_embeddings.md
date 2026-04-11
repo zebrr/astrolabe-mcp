@@ -54,10 +54,10 @@ def create_embedding_backend(index_dir: Path, *, collection_name: str = "astrola
 
 ```python
 class ChromaEmbeddingBackend:
-    def __init__(self, index_dir: Path, *, collection_name: str = "astrolabe") -> None: ...
+    def __init__(self, embeddings_dir: Path, *, collection_name: str = "astrolabe") -> None: ...
 ```
 
-**Storage:** `.chromadb/` subdirectory inside `index_dir`.
+**Storage:** local directory (default `runtime/.chromadb/`, configurable via `embeddings_dir`). Not cloud-synced — ChromaDB HNSW files are too large for reliable cloud drive operation.
 
 **Lazy initialization:** ChromaDB PersistentClient created on first method call (`_ensure_initialized()`). Model loads at that point (~2-3 sec cold start).
 
@@ -75,6 +75,8 @@ class ChromaEmbeddingBackend:
 }
 ```
 
+**Manifest:** `manifest.json` in `embeddings_dir` — tracks `{doc_id: content_hash}` for all embedded documents. Used by `_sync_embeddings()` to determine what needs embedding without querying ChromaDB internals. Cleared on `clear()`.
+
 **Query flow:**
 1. ChromaDB returns distances (cosine, 0-2 range)
 2. Convert to similarity: `score = 1.0 - (distance / 2.0)`
@@ -86,7 +88,8 @@ class ChromaEmbeddingBackend:
 
 ## Integration Points
 
-- **server.py**: globals `_embedding_backend`, `_private_embedding_backend`
-- **search_docs()**: query backends → pass results to `hybrid_search()`
-- **reindex_tool()**: `_sync_embeddings()` after `_save_index()`
+- **server.py**: single global `_embedding_backend` (no shared/private split — embeddings are local)
+- **deep_search()**: query backend → pass results to `hybrid_search()`
+- **reindex_tool()**: manifest-based `_sync_embeddings()` after `_save_index()`
 - **get_cosmos()**: report `embeddings_enabled`, `embedded_chunks`
+- **web server**: no embedding code — web uses stem-only search

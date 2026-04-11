@@ -286,10 +286,22 @@ async def reindex_action(
     if mode not in ("update", "clean", "rebuild"):
         return HTMLResponse(f"Invalid mode: {mode}", status_code=400)
 
-    stats = state.do_reindex(
-        project=project.strip() or None,
-        mode=mode,
-    )
+    try:
+        stats = state.do_reindex(
+            project=project.strip() or None,
+            mode=mode,
+        )
+    except Exception as exc:
+        templates = request.app.state.templates
+        return templates.TemplateResponse(
+            "partials/toast.html",
+            {
+                "request": request,
+                "message": f"Reindex failed: {exc}",
+                "level": "error",
+                "reload": False,
+            },
+        )
 
     if "error" in stats:
         message = str(stats["error"])

@@ -253,6 +253,21 @@ class TestReindex:
         resp = client.post("/api/reindex", data={"mode": "invalid", "project": ""})
         assert resp.status_code == 400
 
+    def test_reindex_storage_error_returns_toast(
+        self, client: TestClient, app_state: AppState
+    ) -> None:
+        """Storage errors during reindex return error toast, not 500."""
+        from unittest.mock import patch
+
+        with patch.object(
+            app_state, "do_reindex", side_effect=Exception("attempt to write a readonly database")
+        ):
+            resp = client.post("/api/reindex", data={"mode": "update", "project": ""})
+
+        assert resp.status_code == 200
+        assert "Reindex failed" in resp.text
+        assert "readonly" in resp.text
+
     def test_refresh(self, client: TestClient) -> None:
         resp = client.post("/api/refresh")
         assert resp.status_code == 200

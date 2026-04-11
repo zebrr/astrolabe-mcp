@@ -27,6 +27,8 @@
   "_default_search_limit_note": "Max results returned by search_docs. Agent can override per-call.",
   "embeddings": false,
   "_embeddings_note": "Enable ChromaDB semantic search via deep_search() tool. Requires: pip install astrolabe-mcp[embeddings]. Searches file content by meaning, works even without enrichment.",
+  "embeddings_dir": null,
+  "_embeddings_dir_note": "Local directory for ChromaDB embeddings. Default: runtime/.chromadb/. Embeddings are local-only (not cloud-synced) — rebuilt per machine via reindex_tool().",
   "semantic_hint_threshold": 5,
   "_semantic_hint_threshold_note": "When search_docs returns fewer results than this, hint suggests trying deep_search. Only shown when embeddings enabled."
 }

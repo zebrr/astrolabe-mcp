@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -18,20 +19,22 @@ logger = logging.getLogger(__name__)
 class ChromaEmbeddingBackend:
     """ChromaDB-based embedding backend with lazy initialization.
 
-    Storage: .chromadb/ subdirectory inside index_dir.
+    Storage: local directory (not cloud-synced).
     Model: ChromaDB's default embedding function (all-MiniLM-L6-v2 via onnxruntime).
+    Manifest: tracks embedded doc_ids and content_hashes for incremental sync.
     """
 
     def __init__(
         self,
-        index_dir: Path,
+        embeddings_dir: Path,
         *,
         collection_name: str = "astrolabe",
     ) -> None:
-        self._index_dir = index_dir
+        self._embeddings_dir = embeddings_dir
         self._collection_name = collection_name
         self._client: chromadb.api.ClientAPI | None = None
         self._collection: chromadb.Collection | None = None
+        self._manifest_path = embeddings_dir / "manifest.json"
 
     def _ensure_initialized(self) -> chromadb.Collection:
         """Lazy init: create client and collection on first use."""
@@ -40,17 +43,16 @@ class ChromaEmbeddingBackend:
 
         import chromadb
 
-        chroma_dir = self._index_dir / ".chromadb"
-        chroma_dir.mkdir(parents=True, exist_ok=True)
+        self._embeddings_dir.mkdir(parents=True, exist_ok=True)
 
-        self._client = chromadb.PersistentClient(path=str(chroma_dir))
+        self._client = chromadb.PersistentClient(path=str(self._embeddings_dir))
         self._collection = self._client.get_or_create_collection(
             name=self._collection_name,
             metadata={"hnsw:space": "cosine"},
         )
         logger.info(
             "ChromaDB initialized: %s (%d chunks)",
-            chroma_dir,
+            self._embeddings_dir,
             self._collection.count(),
         )
         return self._collection
@@ -134,23 +136,54 @@ class ChromaEmbeddingBackend:
         return results
 
     def clear(self) -> None:
-        """Remove all embeddings."""
+        """Remove all embeddings and manifest.
+
+        Raises on failure so callers can handle (e.g. skip embedding sync).
+        """
         if self._client is None:
             self._ensure_initialized()
         assert self._client is not None
 
         # Delete and recreate collection
-        self._client.delete_collection(self._collection_name)
+        try:
+            self._client.delete_collection(self._collection_name)
+        except Exception:
+            logger.warning("Failed to delete ChromaDB collection '%s'", self._collection_name)
+            raise
         self._collection = self._client.get_or_create_collection(
             name=self._collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+        # Clear manifest
+        if self._manifest_path.exists():
+            self._manifest_path.unlink()
 
     @property
     def count(self) -> int:
         """Number of embedded chunks."""
         collection = self._ensure_initialized()
         return int(collection.count())
+
+    def load_manifest(self) -> dict[str, str]:
+        """Load embedding manifest: {doc_id: content_hash} for embedded docs."""
+        if not self._manifest_path.exists():
+            return {}
+        try:
+            data = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load embedding manifest: %s", exc)
+        return {}
+
+    def save_manifest(self, manifest: dict[str, str]) -> None:
+        """Save embedding manifest to disk."""
+        self._embeddings_dir.mkdir(parents=True, exist_ok=True)
+        self._manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
     @staticmethod
     def _delete_by_doc_id(collection: chromadb.Collection, doc_id: str) -> None:
@@ -160,5 +193,6 @@ class ChromaEmbeddingBackend:
             if existing["ids"]:
                 collection.delete(ids=existing["ids"])
         except Exception:
-            # Collection may be empty or doc_id not found
-            pass
+            # ChromaDB may raise on empty collections or missing metadata fields;
+            # this is expected when the doc was never embedded.
+            logger.debug("Could not delete chunks for %s (may not exist)", doc_id)

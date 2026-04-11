@@ -149,18 +149,20 @@ class TestChromaEmbeddingBackend:
         backend.clear()
         assert backend.count == 0
 
-    def test_creates_chromadb_dir(self, tmp_path: Path) -> None:
-        backend = ChromaEmbeddingBackend(tmp_path, collection_name="test_dir")
+    def test_creates_embeddings_dir(self, tmp_path: Path) -> None:
+        embed_dir = tmp_path / "embeddings"
+        backend = ChromaEmbeddingBackend(embed_dir, collection_name="test_dir")
         backend.upsert_document(
             "proj::doc.md",
             ["content"],
             {"doc_id": "proj::doc.md", "project": "proj", "content_hash": "abc"},
         )
-        assert (tmp_path / ".chromadb").exists()
+        assert embed_dir.exists()
 
     def test_persistence(self, tmp_path: Path) -> None:
+        embed_dir = tmp_path / "persist"
         # Write data
-        backend1 = ChromaEmbeddingBackend(tmp_path, collection_name="persist_test")
+        backend1 = ChromaEmbeddingBackend(embed_dir, collection_name="persist_test")
         backend1.upsert_document(
             "proj::doc.md",
             ["persistent content"],
@@ -169,7 +171,7 @@ class TestChromaEmbeddingBackend:
         assert backend1.count == 1
 
         # Create new backend pointing to same dir
-        backend2 = ChromaEmbeddingBackend(tmp_path, collection_name="persist_test")
+        backend2 = ChromaEmbeddingBackend(embed_dir, collection_name="persist_test")
         assert backend2.count == 1
 
     def test_multiple_documents(self, backend: ChromaEmbeddingBackend) -> None:
@@ -184,3 +186,40 @@ class TestChromaEmbeddingBackend:
         # Remove one
         backend.remove_document("proj::doc5.md")
         assert backend.count == 9
+
+
+class TestManifest:
+    """Tests for embedding manifest (tracks what's been embedded)."""
+
+    @pytest.fixture()
+    def backend(self, tmp_path: Path) -> ChromaEmbeddingBackend:
+        return ChromaEmbeddingBackend(tmp_path / "embeddings", collection_name="test")
+
+    def test_empty_manifest(self, backend: ChromaEmbeddingBackend) -> None:
+        assert backend.load_manifest() == {}
+
+    def test_save_and_load(self, backend: ChromaEmbeddingBackend) -> None:
+        manifest = {"proj::a.md": "hash1", "proj::b.md": "hash2"}
+        backend.save_manifest(manifest)
+        loaded = backend.load_manifest()
+        assert loaded == manifest
+
+    def test_clear_removes_manifest(self, backend: ChromaEmbeddingBackend) -> None:
+        backend.save_manifest({"proj::a.md": "hash1"})
+        backend.clear()
+        assert backend.load_manifest() == {}
+
+    def test_corrupt_manifest_returns_empty(self, tmp_path: Path) -> None:
+        embed_dir = tmp_path / "embeddings"
+        embed_dir.mkdir(parents=True)
+        (embed_dir / "manifest.json").write_text("not json{{{", encoding="utf-8")
+        backend = ChromaEmbeddingBackend(embed_dir, collection_name="test")
+        assert backend.load_manifest() == {}
+
+    def test_manifest_persists_across_instances(self, tmp_path: Path) -> None:
+        embed_dir = tmp_path / "embeddings"
+        b1 = ChromaEmbeddingBackend(embed_dir, collection_name="test")
+        b1.save_manifest({"proj::doc.md": "abc123"})
+
+        b2 = ChromaEmbeddingBackend(embed_dir, collection_name="test")
+        assert b2.load_manifest() == {"proj::doc.md": "abc123"}

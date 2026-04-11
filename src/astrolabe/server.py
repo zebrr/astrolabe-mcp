@@ -37,7 +37,6 @@ _private_storage: StorageBackend | None = None
 _doc_types_full: dict[str, dict[str, Any]] = {}
 _doc_types: dict[str, str] = {}
 _embedding_backend: EmbeddingBackend | None = None
-_private_embedding_backend: EmbeddingBackend | None = None
 
 
 def _load_all_doc_types(config: AppConfig, config_path: Path) -> None:
@@ -99,11 +98,10 @@ def _save_index() -> None:
 
 
 def _init_embeddings(config: AppConfig) -> None:
-    """Initialize embedding backends if embeddings are enabled."""
-    global _embedding_backend, _private_embedding_backend
+    """Initialize embedding backend if embeddings are enabled."""
+    global _embedding_backend
 
     _embedding_backend = None
-    _private_embedding_backend = None
 
     if not config.embeddings:
         return
@@ -118,22 +116,9 @@ def _init_embeddings(config: AppConfig) -> None:
 
     from astrolabe.embeddings import create_embedding_backend
 
-    _embedding_backend = create_embedding_backend(config.index_dir)
-    logger.info("Shared embedding backend created at %s", config.index_dir)
-
-    if config.private_index_dir is not None:
-        _private_embedding_backend = create_embedding_backend(
-            config.private_index_dir, collection_name="astrolabe_private"
-        )
-        logger.info("Private embedding backend created at %s", config.private_index_dir)
-
-
-def _get_embedding_backend_for_project(project: str) -> EmbeddingBackend | None:
-    """Return the correct embedding backend for a project."""
-    assert _config is not None
-    if _private_embedding_backend is not None and _config.is_private(project):
-        return _private_embedding_backend
-    return _embedding_backend
+    embeddings_dir = config.embeddings_dir or Path("runtime/.chromadb")
+    _embedding_backend = create_embedding_backend(embeddings_dir)
+    logger.info("Embedding backend created at %s", embeddings_dir)
 
 
 def _sync_embeddings(
@@ -142,39 +127,44 @@ def _sync_embeddings(
     config: AppConfig,
     mode: str,
 ) -> None:
-    """Sync embeddings after reindex: embed new/stale docs, remove deleted."""
-    if _embedding_backend is None and _private_embedding_backend is None:
+    """Sync embeddings after reindex using manifest-based diff.
+
+    Compares index state with embedding manifest to determine what needs
+    embedding. Works correctly for first launch (empty manifest), partial
+    embeddings, and incremental updates.
+    """
+    if _embedding_backend is None:
         return
 
-    doc_ids_to_embed = stats._new_doc_ids | stats._stale_doc_ids
-
-    # Detect first-time enablement: ChromaDB empty but documents exist
-    total_chunks = 0
-    if _embedding_backend is not None:
-        total_chunks += _embedding_backend.count
-    if _private_embedding_backend is not None:
-        total_chunks += _private_embedding_backend.count
-    if total_chunks == 0 and index.documents:
-        logger.info("Embeddings first run: embedding all %d documents", len(index.documents))
-        doc_ids_to_embed = set(index.documents.keys())
-
     if mode == "rebuild":
-        # Clear all embeddings and re-embed everything
-        if _embedding_backend is not None:
+        try:
             _embedding_backend.clear()
-        if _private_embedding_backend is not None:
-            _private_embedding_backend.clear()
-        doc_ids_to_embed = set(index.documents.keys())
+        except Exception as exc:
+            logger.error("Failed to clear embeddings during rebuild: %s", exc)
+            return
 
-    for doc_id in doc_ids_to_embed:
-        card = index.documents.get(doc_id)
-        if card is None:
-            continue
+    # Load manifest and diff with current index
+    manifest = _embedding_backend.load_manifest()
 
-        backend = _get_embedding_backend_for_project(card.project)
-        if backend is None:
-            continue
+    to_embed: dict[str, DocCard] = {}
+    for doc_id, card in index.documents.items():
+        if doc_id not in manifest or manifest[doc_id] != card.content_hash:
+            to_embed[doc_id] = card
 
+    to_remove = set(manifest.keys()) - set(index.documents.keys())
+
+    if not to_embed and not to_remove:
+        logger.info("Embedding sync: nothing to do")
+        return
+
+    logger.info(
+        "Embedding sync: %d to embed, %d to remove",
+        len(to_embed),
+        len(to_remove),
+    )
+
+    # Embed new/changed documents
+    for doc_id, card in to_embed.items():
         project_path = config.all_projects.get(card.project)
         if project_path is None:
             continue
@@ -185,23 +175,31 @@ def _sync_embeddings(
 
         chunks = chunk_file(file_path, max_file_size_kb=config.max_file_size_kb)
         if not chunks:
-            stats.embedding_errors += 1
+            # Binary/media/oversized — not embeddable, mark in manifest to skip next time
+            manifest[doc_id] = card.content_hash
             continue
 
-        backend.upsert_document(
-            doc_id,
-            chunks,
-            {"doc_id": doc_id, "project": card.project, "content_hash": card.content_hash},
-        )
-        stats.embedded += 1
+        try:
+            _embedding_backend.upsert_document(
+                doc_id,
+                chunks,
+                {"doc_id": doc_id, "project": card.project, "content_hash": card.content_hash},
+            )
+            manifest[doc_id] = card.content_hash
+            stats.embedded += 1
+        except Exception as exc:
+            logger.warning("Failed to embed %s: %s", doc_id, exc)
+            stats.embedding_errors += 1
 
-    # Remove embeddings for removed documents
-    for doc_id in stats._removed_doc_ids:
-        # Determine project from doc_id prefix
-        project = doc_id.split("::")[0] if "::" in doc_id else ""
-        backend = _get_embedding_backend_for_project(project)
-        if backend is not None:
-            backend.remove_document(doc_id)
+    # Remove embeddings for deleted documents
+    for doc_id in to_remove:
+        try:
+            _embedding_backend.remove_document(doc_id)
+        except Exception as exc:
+            logger.warning("Failed to remove embedding for %s: %s", doc_id, exc)
+        manifest.pop(doc_id, None)
+
+    _embedding_backend.save_manifest(manifest)
 
 
 def _get_storage_for_project(project: str) -> StorageBackend:
@@ -370,11 +368,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
 
     # Embedding stats
     embeddings_enabled = _embedding_backend is not None
-    embedded_chunks = 0
-    if _embedding_backend is not None:
-        embedded_chunks += _embedding_backend.count
-    if _private_embedding_backend is not None:
-        embedded_chunks += _private_embedding_backend.count
+    embedded_chunks = _embedding_backend.count if _embedding_backend is not None else 0
 
     resp = CosmosResponse(
         server_version=__version__,
@@ -629,16 +623,11 @@ def deep_search(
             "hint": "Install with: pip install astrolabe-mcp[embeddings]",
         }
 
-    # Query both embedding backends
+    # Query embedding backend
     n_chunks = max(30, effective_max * 2)
     embedding_results: list[EmbeddingResult] = _embedding_backend.query(
         query, n_results=n_chunks, project=project
     )
-    if _private_embedding_backend is not None:
-        private_results = _private_embedding_backend.query(
-            query, n_results=n_chunks, project=project
-        )
-        embedding_results.extend(private_results)
 
     # Use hybrid_search with embedding results (stem + embed combined)
     results = hybrid_search(
@@ -899,21 +888,21 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         _private_storage = None
 
     config = _config
-    if _index is None:
-        # Load and merge from both storages
-        shared_data = _storage.load()
-        private_data = _private_storage.load() if _private_storage is not None else None
-        existing_docs: dict[str, Any] = {}
-        indexed_at = datetime.now(UTC)
-        if shared_data is not None:
-            existing_docs.update(shared_data.documents)
-            indexed_at = shared_data.indexed_at
-        if private_data is not None:
-            existing_docs.update(private_data.documents)
-        if existing_docs:
-            _index = IndexData(indexed_at=indexed_at, documents=existing_docs)
-        else:
-            _index = build_index(config)
+
+    # Always reload from storage to pick up changes from web UI or other processes
+    shared_data = _storage.load()
+    private_data = _private_storage.load() if _private_storage is not None else None
+    existing_docs: dict[str, Any] = {}
+    indexed_at = datetime.now(UTC)
+    if shared_data is not None:
+        existing_docs.update(shared_data.documents)
+        indexed_at = shared_data.indexed_at
+    if private_data is not None:
+        existing_docs.update(private_data.documents)
+    if existing_docs:
+        _index = IndexData(indexed_at=indexed_at, documents=existing_docs)
+    else:
+        _index = build_index(config)
     index = _index
 
     start = datetime.now(UTC)
@@ -955,7 +944,10 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
     _init_embeddings(config)
 
     # Sync embeddings for new/stale/removed documents
-    _sync_embeddings(_index, stats, config, mode=reindex_mode)
+    try:
+        _sync_embeddings(_index, stats, config, mode=reindex_mode)
+    except Exception as exc:
+        logger.error("Embedding sync failed (index saved successfully): %s", exc)
 
     duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 

@@ -57,12 +57,20 @@ class EmbeddingBackend(Protocol):
         ...
 
     def clear(self) -> None:
-        """Remove all embeddings (used during rebuild)."""
+        """Remove all embeddings and manifest (used during rebuild)."""
         ...
 
     @property
     def count(self) -> int:
         """Number of embedded chunks."""
+        ...
+
+    def load_manifest(self) -> dict[str, str]:
+        """Load embedding manifest: {doc_id: content_hash} for embedded docs."""
+        ...
+
+    def save_manifest(self, manifest: dict[str, str]) -> None:
+        """Save embedding manifest to disk."""
         ...
 
 
@@ -77,14 +85,14 @@ def is_embeddings_available() -> bool:
 
 
 def create_embedding_backend(
-    index_dir: Path,
+    embeddings_dir: Path,
     *,
     collection_name: str = "astrolabe",
 ) -> "EmbeddingBackend":
     """Create a ChromaDB embedding backend.
 
     Args:
-        index_dir: Directory to store ChromaDB data (creates .chromadb/ subdir).
+        embeddings_dir: Directory for ChromaDB persistent storage (local, not cloud-synced).
         collection_name: ChromaDB collection name.
 
     Returns:
@@ -95,4 +103,4 @@ def create_embedding_backend(
     """
     from astrolabe.embeddings_chroma import ChromaEmbeddingBackend
 
-    return ChromaEmbeddingBackend(index_dir, collection_name=collection_name)
+    return ChromaEmbeddingBackend(embeddings_dir, collection_name=collection_name)

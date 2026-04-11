@@ -90,7 +90,7 @@ def search(
     Returns:
         List of SearchResult sorted by relevance descending.
     """
-    tokens = query.lower().split()
+    tokens = query.lower().replace("_", " ").replace("-", " ").split()
     if not tokens:
         return []
 
@@ -172,7 +172,7 @@ def hybrid_search(
     Returns:
         List of SearchResult sorted by relevance descending.
     """
-    tokens = query.lower().split()
+    tokens = query.lower().replace("_", " ").replace("-", " ").split()
     if not tokens:
         return []
 

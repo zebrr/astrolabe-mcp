@@ -44,6 +44,7 @@ runtime/config.json
 runtime/doc_types.yaml
 runtime/.doc-index.json
 runtime/.doc-index.json.lock
+runtime/.chromadb/
 .doc-index.json
 
 # MCP config (contains absolute paths)

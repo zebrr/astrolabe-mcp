@@ -4,12 +4,30 @@ import contextlib
 import json
 import logging
 import sqlite3
+import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from astrolabe.models import DocCard, IndexData
 
 logger = logging.getLogger(__name__)
+
+# Retry settings for transient errors (cloud drive sync, etc.)
+WRITE_MAX_RETRIES = 3
+WRITE_RETRY_DELAY_S = 1.0
+_TRANSIENT_KEYWORDS = ("readonly", "locked", "busy")
+
+
+def _is_transient_error(err: sqlite3.OperationalError) -> bool:
+    """Check if a SQLite error is transient and worth retrying.
+
+    Cloud drives (Google Drive, iCloud, OneDrive) may temporarily mark files
+    as read-only or hold locks during sync, causing OperationalError.
+    """
+    msg = str(err).lower()
+    return any(kw in msg for kw in _TRANSIENT_KEYWORDS)
+
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS meta (
@@ -107,6 +125,29 @@ class SqliteStorage:
         with contextlib.suppress(sqlite3.OperationalError):
             self._conn.execute("ALTER TABLE documents ADD COLUMN enriched_content_hash TEXT")
 
+    def _retry_write(self, fn: Callable[[], None]) -> None:
+        """Execute a write operation with retry on transient errors.
+
+        Cloud drives (Google Drive, iCloud, etc.) may temporarily lock
+        database files during sync, causing 'readonly' or 'locked' errors.
+        Retries up to WRITE_MAX_RETRIES times with WRITE_RETRY_DELAY_S delay.
+        """
+        for attempt in range(WRITE_MAX_RETRIES):
+            try:
+                fn()
+                return
+            except sqlite3.OperationalError as exc:
+                if not _is_transient_error(exc) or attempt >= WRITE_MAX_RETRIES - 1:
+                    raise
+                logger.warning(
+                    "Transient SQLite error (attempt %d/%d, retry in %.1fs): %s",
+                    attempt + 1,
+                    WRITE_MAX_RETRIES,
+                    WRITE_RETRY_DELAY_S,
+                    exc,
+                )
+                time.sleep(WRITE_RETRY_DELAY_S)
+
     def load(self) -> IndexData | None:
         """Load entire index from SQLite database."""
         try:
@@ -137,33 +178,47 @@ class SqliteStorage:
             return None
 
     def save(self, index: IndexData) -> None:
-        """Save entire index (full overwrite) in a single transaction."""
-        with self._conn:
-            self._conn.execute("DELETE FROM documents")
-            self._conn.execute("DELETE FROM meta")
+        """Save entire index (full overwrite) in a single transaction.
 
-            self._conn.execute(
-                "INSERT INTO meta (key, value) VALUES (?, ?)",
-                ("version", index.version),
-            )
-            self._conn.execute(
-                "INSERT INTO meta (key, value) VALUES (?, ?)",
-                ("indexed_at", index.indexed_at.isoformat()),
-            )
+        Retries on transient errors (cloud drive sync locks).
+        """
 
-            self._conn.executemany(
-                _INSERT_SQL,
-                [_card_to_row(card) for card in index.documents.values()],
-            )
+        def _do_save() -> None:
+            with self._conn:
+                self._conn.execute("DELETE FROM documents")
+                self._conn.execute("DELETE FROM meta")
+
+                self._conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    ("version", index.version),
+                )
+                self._conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    ("indexed_at", index.indexed_at.isoformat()),
+                )
+
+                self._conn.executemany(
+                    _INSERT_SQL,
+                    [_card_to_row(card) for card in index.documents.values()],
+                )
+
+        self._retry_write(_do_save)
 
     def save_card(self, card: DocCard, indexed_at: datetime) -> None:
-        """Persist a single card via INSERT OR REPLACE."""
-        with self._conn:
-            self._conn.execute(_INSERT_SQL, _card_to_row(card))
-            self._conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-                ("indexed_at", indexed_at.isoformat()),
-            )
+        """Persist a single card via INSERT OR REPLACE.
+
+        Retries on transient errors (cloud drive sync locks).
+        """
+
+        def _do_save_card() -> None:
+            with self._conn:
+                self._conn.execute(_INSERT_SQL, _card_to_row(card))
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                    ("indexed_at", indexed_at.isoformat()),
+                )
+
+        self._retry_write(_do_save_card)
 
     def exists(self) -> bool:
         """Check if database file exists."""

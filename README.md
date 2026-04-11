@@ -227,9 +227,11 @@ Each query token and each word in a field are stemmed with both EN and RU Snowba
 
 **When to use:** when `search_docs` returns too few results, or when searching for a concept rather than an exact term. The agent is guided automatically — `search_docs` hints at `deep_search` when results are sparse.
 
-**Setup:** add `"embeddings": true` to `config.json` and install with `pip install -e ".[embeddings]"`. Run `reindex_tool()` to embed all files (one-time, takes ~1-2 minutes for 1500 documents). After that, `deep_search` is available as a separate MCP tool.
+**Setup:** add `"embeddings": true` to `config.json` and install with `pip install -e ".[embeddings]"`. Run `reindex_tool()` to build embeddings (one-time, takes ~1-2 minutes for 1500 documents). After that, `deep_search` is available as a separate MCP tool.
 
 **How it works:** files are split into ~800-character chunks and embedded using ChromaDB's built-in model (all-MiniLM-L6-v2, ~80MB, runs locally, no API keys). On query, `deep_search` combines semantic similarity with stem matching for hybrid scoring.
+
+**Storage:** embeddings are stored locally (`runtime/.chromadb/` by default, configurable via `embeddings_dir`). They are **not cloud-synced** — ChromaDB's internal files (HNSW index) are too large for reliable cloud drive sync. Embeddings are rebuilt per machine on first `reindex_tool()` call; subsequent runs only update new/changed documents (tracked via manifest).
 
 ## MCP Tools
 
@@ -321,7 +323,7 @@ The web server runs as a separate process and shares the storage backend with th
 - **Media files** — images, audio, video indexed by filename only
 - **No code parsing** — `.py`/`.sh` files are read as plain text, no AST analysis
 - **Semantic search model** — fixed to all-MiniLM-L6-v2, no model choice yet
-- **Semantic search sync** — ChromaDB `.chromadb/` directory may not sync reliably via cloud drives; treat embeddings as local per machine
+- **Embeddings are local** — not synced via cloud drives (ChromaDB HNSW files are too large); rebuilt per machine on first reindex
 - **No file writing** — index card editing via Web UI, but no document content editing via MCP
 - **Single index file** — JSON uses filelock, SQLite uses its own locking; not designed for high-throughput multi-client scenarios
 

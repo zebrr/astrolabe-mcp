@@ -33,6 +33,10 @@ def load_config(config_path: Path) -> AppConfig:
     if config.private_index_dir is not None and not config.private_index_dir.is_absolute():
         config.private_index_dir = config_path.parent / config.private_index_dir
 
+    # Resolve embeddings_dir relative to config file directory
+    if config.embeddings_dir is not None and not config.embeddings_dir.is_absolute():
+        config.embeddings_dir = config_path.parent / config.embeddings_dir
+
     return config
 
 
