@@ -637,3 +637,59 @@ class TestSqliteSpecific:
         loaded2 = s.load()
         assert loaded2 is not None
         assert loaded2.documents["proj::doc.md"].enriched_content_hash == "abc123"
+
+    def test_schema_migration_adds_diverged_from(self, tmp_path: Path) -> None:
+        """Opening a DB without diverged_from column auto-migrates."""
+        import sqlite3 as _sqlite3
+
+        db_path = tmp_path / "legacy_no_diverged.db"
+        conn = _sqlite3.connect(str(db_path))
+        # Simulate a v0.8/v0.9 DB: has enriched_content_hash, but no diverged_from
+        conn.executescript("""
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY, project TEXT NOT NULL,
+                filename TEXT NOT NULL, rel_path TEXT NOT NULL,
+                size INTEGER NOT NULL, modified TEXT NOT NULL,
+                content_hash TEXT NOT NULL, type TEXT,
+                headings TEXT, summary TEXT, keywords TEXT, enriched_at TEXT,
+                enriched_content_hash TEXT
+            );
+        """)
+        conn.execute("INSERT INTO meta VALUES ('version', '0.9.2')")
+        conn.execute("INSERT INTO meta VALUES ('indexed_at', '2026-01-01T00:00:00+00:00')")
+        conn.execute("""
+            INSERT INTO documents VALUES (
+                'proj::doc.md', 'proj', 'doc.md', 'doc.md', 100,
+                '2026-01-01T00:00:00+00:00', 'abc123',
+                'spec', NULL, 'A spec', NULL, '2026-01-02T00:00:00+00:00', 'abc123'
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        s = SqliteStorage(db_path)
+        loaded = s.load()
+        assert loaded is not None
+        card = loaded.documents["proj::doc.md"]
+        assert card.diverged_from is None  # legacy row
+
+        # Round-trip with divergence set
+        card.diverged_from = ["other::doc.md"]
+        s.save_card(card, loaded.indexed_at)
+
+        loaded2 = s.load()
+        assert loaded2 is not None
+        assert loaded2.documents["proj::doc.md"].diverged_from == ["other::doc.md"]
+
+    def test_diverged_from_roundtrip(self, tmp_path: Path) -> None:
+        """diverged_from field survives save/load in both SQLite and JSON."""
+        s = SqliteStorage(tmp_path / "index.db")
+        card = _make_card(enriched=True)
+        card.diverged_from = ["other::a.md", "other::b.md"]
+
+        s.save(_make_index([card]))
+        loaded = s.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.diverged_from == ["other::a.md", "other::b.md"]

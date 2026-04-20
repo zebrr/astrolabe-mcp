@@ -70,6 +70,10 @@ class DocCard(BaseModel):
     enriched_at: datetime | None = None
     enriched_content_hash: str | None = None
 
+    # Divergence: former siblings whose hash no longer matches
+    # (None until a duplicate group splits)
+    diverged_from: list[str] | None = None
+
     @property
     def doc_id(self) -> str:
         """Unique document identifier: project::rel_path."""
@@ -106,6 +110,7 @@ class ProjectSummary(BaseModel):
     stale_count: int = 0
     empty_count: int = 0
     desync_count: int = 0
+    diverged_count: int = 0
     last_indexed: datetime
 
 
@@ -127,6 +132,7 @@ class CosmosResponse(BaseModel):
     stale_documents: int
     empty_documents: int
     desync_documents: int = 0
+    diverged_documents: int = 0
     embeddings_enabled: bool = False
     embedded_chunks: int = 0
     projects: list[ProjectSummary]

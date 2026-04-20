@@ -212,18 +212,20 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 CREATE TABLE IF NOT EXISTS documents (
-    doc_id       TEXT PRIMARY KEY,
-    project      TEXT NOT NULL,
-    filename     TEXT NOT NULL,
-    rel_path     TEXT NOT NULL,
-    size         INTEGER NOT NULL,
-    modified     TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    type         TEXT,
-    headings     TEXT,
-    summary      TEXT,
-    keywords     TEXT,
-    enriched_at  TEXT
+    doc_id                TEXT PRIMARY KEY,
+    project               TEXT NOT NULL,
+    filename              TEXT NOT NULL,
+    rel_path              TEXT NOT NULL,
+    size                  INTEGER NOT NULL,
+    modified              TEXT NOT NULL,
+    content_hash          TEXT NOT NULL,
+    type                  TEXT,
+    headings              TEXT,
+    summary               TEXT,
+    keywords              TEXT,
+    enriched_at           TEXT,
+    enriched_content_hash TEXT,
+    diverged_from         TEXT   -- JSON array of doc_ids, NULL when no divergence
 );
 
 CREATE INDEX IF NOT EXISTS idx_project ON documents(project);
@@ -233,9 +235,20 @@ CREATE INDEX IF NOT EXISTS idx_type ON documents(type);
 ### Data conversion
 
 - **Timestamps**: ISO 8601 strings (`datetime.isoformat()` / `datetime.fromisoformat()`)
-- **headings, keywords**: `json.dumps(list)` / `json.loads(str)`, NULL if None
+- **headings, keywords, diverged_from**: `json.dumps(list)` / `json.loads(str)`, NULL if None or empty
 - **size**: INTEGER (native SQLite)
 - **All other fields**: TEXT
+
+### Migration pattern
+
+New columns are added on open via `ALTER TABLE ... ADD COLUMN` wrapped in `contextlib.suppress(sqlite3.OperationalError)`. The suppress catches the "duplicate column" error raised when the column already exists, so old and new databases both work. Example:
+
+```python
+with contextlib.suppress(sqlite3.OperationalError):
+    self._conn.execute("ALTER TABLE documents ADD COLUMN diverged_from TEXT")
+```
+
+Used historically for `enriched_content_hash` and now for `diverged_from`. Pre-existing databases without the column load with `diverged_from = None` (no divergence flag).
 
 ### Connection management
 

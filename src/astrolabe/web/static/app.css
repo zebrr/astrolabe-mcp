@@ -238,6 +238,11 @@
     font-size: 0.85em;
 }
 
+.diverged-mark {
+    color: #9b59b6;
+    font-weight: bold;
+}
+
 /* Row highlights */
 .stale-row { border-left: 3px solid #b8860b; }
 .empty-row { opacity: 0.7; }
@@ -246,6 +251,7 @@
 .stale-bg { border-left: 3px solid #b8860b; padding-left: 0.4rem; }
 .empty-bg { border-left: 3px solid #888; padding-left: 0.4rem; }
 .desync-bg { border-left: 3px solid #dc3545; padding-left: 0.4rem; }
+.diverged-bg { border-left: 3px solid #9b59b6; padding-left: 0.4rem; }
 
 /* Duplicate marker in card list */
 .dup-mark {
@@ -337,6 +343,21 @@
     font-size: 0.85em;
     color: var(--pico-muted-color);
     margin-bottom: 0.75rem;
+}
+
+/* Divergence info block */
+.diverged-info {
+    font-size: 0.9em;
+    margin-bottom: 0.75rem;
+    padding: 0.4rem 0.6rem;
+    border-left: 3px solid #9b59b6;
+    background: rgba(155, 89, 182, 0.08);
+}
+
+.diverged-info button {
+    margin-left: 0.5rem;
+    font-size: 0.85em;
+    padding: 0.15rem 0.6rem;
 }
 
 /* Card sections */

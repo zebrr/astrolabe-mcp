@@ -64,12 +64,22 @@ class DocCard(BaseModel):
     keywords: list[str] | None = None
     enriched_at: datetime | None = None
     enriched_content_hash: str | None = None  # content_hash snapshot at enrichment time
+
+    # Divergence tracking (null until a duplicate group splits)
+    diverged_from: list[str] | None = None    # former siblings (doc_ids) whose hash no longer matches
 ```
 
 Computed properties:
 - `doc_id: str` — `"{project}::{rel_path}"`
 - `is_stale: bool` — `enriched_content_hash is not None and content_hash != enriched_content_hash` (file content changed since enrichment)
 - `is_empty: bool` — `enriched_at is None`
+
+Divergence semantics:
+- `diverged_from` is an independent axis from `is_stale`. A card can be both stale and diverged, or either alone.
+- Flag is carried ONLY by the card whose `content_hash` changed since the previous reindex (the "child" of the edit). Unchanged former siblings stay clean.
+- Value semantics: list of `doc_id` strings that were in the card's duplicate group before the hash change and are not currently in its group.
+- `None` (or empty list, never stored) means "no known divergence".
+- Cleared by `reindex()` when the card's hash reconverges with at least one listed sibling, or explicitly by the `accept_divergence` MCP tool.
 
 ### IndexData
 
@@ -95,6 +105,7 @@ class ProjectSummary(BaseModel):
     doc_count: int
     enriched_count: int
     desync_count: int = 0          # files missing on disk (runtime check)
+    diverged_count: int = 0        # cards with non-empty diverged_from
     last_indexed: datetime
 ```
 
@@ -121,7 +132,8 @@ class CosmosResponse(BaseModel):
     enriched_documents: int
     stale_documents: int
     empty_documents: int
-    desync_documents: int = 0    # files missing on disk (project in config)
+    desync_documents: int = 0      # files missing on disk (project in config)
+    diverged_documents: int = 0    # cards with non-empty diverged_from
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 ```

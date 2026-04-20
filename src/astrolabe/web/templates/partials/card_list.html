@@ -21,6 +21,7 @@
             <td class="filename-cell">
                 <a href="/cards/{{ quote(card.doc_id, safe='') }}">{{ card.filename }}</a>
                 {% if card.content_hash in hash_map %}<span class="dup-mark" title="Has copies">&#x2234;</span>{% endif %}
+                {% if card.diverged_from %}<span class="diverged-mark" title="Edited copy — diverged from {{ card.diverged_from|length }} former sibling(s). Open the card to accept or sync.">&#x2020;</span>{% endif %}
             </td>
             <td>
                 {% if filter_project %}{{ card.project }}{% else %}<a href="/cards?project={{ quote(card.project) }}">{{ card.project }}</a>{% endif %}
@@ -47,6 +48,7 @@
 {% if filter_stale %}{% set _ = qs_parts.append("stale=true") %}{% endif %}
 {% if filter_empty %}{% set _ = qs_parts.append("empty=true") %}{% endif %}
 {% if filter_desync %}{% set _ = qs_parts.append("desync=true") %}{% endif %}
+{% if filter_diverged %}{% set _ = qs_parts.append("diverged=true") %}{% endif %}
 {% set qs_base = "&".join(qs_parts) %}
 {% set qs_sep = "&" if qs_base else "" %}
 

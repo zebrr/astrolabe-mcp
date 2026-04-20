@@ -222,7 +222,7 @@ class AppState:
         self._save_index()
         duration_ms = int((datetime.now(UTC) - start).total_seconds() * 1000)
 
-        return {
+        result: dict[str, Any] = {
             "scanned": stats.scanned,
             "new": stats.new,
             "removed": stats.removed,
@@ -232,6 +232,9 @@ class AppState:
             "desync": stats.desync,
             "duration_ms": duration_ms,
         }
+        if stats.new_divergences:
+            result["new_divergences"] = stats.new_divergences
+        return result
 
     def get_cosmos(self) -> CosmosResponse:
         """Build cosmos overview response."""
@@ -248,6 +251,7 @@ class AppState:
                 "stale_count": 0,
                 "empty_count": 0,
                 "desync_count": 0,
+                "diverged_count": 0,
             }
 
         total = len(index.documents)
@@ -255,9 +259,11 @@ class AppState:
         stale = 0
         empty = 0
         desync_count = 0
+        diverged_count = 0
         type_counts: dict[str, int] = {}
 
         for card in index.documents.values():
+            is_diverged = bool(card.diverged_from)
             if card.project in project_stats:
                 project_stats[card.project]["doc_count"] += 1
                 if not card.is_empty:
@@ -269,6 +275,11 @@ class AppState:
                 if self.is_desync(card):
                     desync_count += 1
                     project_stats[card.project]["desync_count"] += 1
+                if is_diverged:
+                    project_stats[card.project]["diverged_count"] += 1
+
+            if is_diverged:
+                diverged_count += 1
 
             if card.is_empty:
                 empty += 1
@@ -289,6 +300,7 @@ class AppState:
                 stale_count=s["stale_count"],
                 empty_count=s["empty_count"],
                 desync_count=s["desync_count"],
+                diverged_count=s["diverged_count"],
                 last_indexed=index.indexed_at,
             )
             for pid, s in project_stats.items()
@@ -307,6 +319,7 @@ class AppState:
             stale_documents=stale,
             empty_documents=empty,
             desync_documents=desync_count,
+            diverged_documents=diverged_count,
             projects=projects,
             document_types=document_types,
         )
@@ -319,6 +332,7 @@ class AppState:
         stale: bool = False,
         desync: bool = False,
         empty: bool = False,
+        diverged: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[DocCard], int]:
@@ -335,11 +349,25 @@ class AppState:
                 continue
             if desync and not self.is_desync(card):
                 continue
+            if diverged and not card.diverged_from:
+                continue
             filtered.append(card)
 
         total = len(filtered)
         page = filtered[offset : offset + limit]
         return page, total
+
+    def accept_divergence(self, doc_id: str) -> dict[str, Any]:
+        """Clear diverged_from on a card and persist. Returns status dict."""
+        if doc_id not in self.index.documents:
+            return {"error": f"Document not found: {doc_id}"}
+        card = self.index.documents[doc_id]
+        if not card.diverged_from:
+            return {"error": "No divergence to accept."}
+        cleared = list(card.diverged_from)
+        card.diverged_from = None
+        self.save_card(card)
+        return {"ok": True, "doc_id": doc_id, "cleared_from": cleared}
 
     def _dedup_results(self, results: list[Any]) -> list[Any]:
         """Deduplicate search results by content_hash."""

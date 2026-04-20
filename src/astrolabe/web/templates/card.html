@@ -32,6 +32,17 @@
 </div>
 {% endif %}
 
+{% if card.diverged_from %}
+<div class="diverged-info">
+    <strong>Diverged from:</strong>
+    {% for cid in card.diverged_from %}<a href="/cards/{{ quote(cid, safe='') }}">{{ cid }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+    <button type="button" class="compact-btn outline"
+            hx-post="/api/cards/{{ quote(card.doc_id, safe='') }}/accept-divergence"
+            hx-target="#toast-container" hx-swap="innerHTML"
+            title="Accept the split — stop tracking former siblings">Accept divergence</button>
+</div>
+{% endif %}
+
 <!-- Enrichment fields (swappable via HTMX) -->
 <div id="card-fields">
     {% include "partials/card_fields.html" %}

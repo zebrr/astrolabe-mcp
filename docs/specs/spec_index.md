@@ -62,11 +62,11 @@ Rescan filesystem and merge with existing index.
 
 **Modes** (escalating):
 
-| mode | Missing files (desync) | Enrichment | Move detection |
-|------|----------------------|------------|----------------|
-| `update` | preserved | preserved | yes |
-| `clean` | removed | preserved | skipped |
-| `rebuild` | removed | reset | skipped |
+| mode | Missing files (desync) | Enrichment | Move detection | Divergence detection |
+|------|----------------------|------------|----------------|----------------------|
+| `update` | preserved | preserved | yes | yes |
+| `clean` | removed | preserved | skipped | skipped |
+| `rebuild` | removed | reset | skipped | skipped (flags cleared with enrichment) |
 
 Pass-through cards are always preserved regardless of mode.
 - Returns updated IndexData + stats
@@ -102,6 +102,7 @@ class ReindexStats:
     desync: int         # cards where file is missing on disk (project in config)
     auto_transferred: list[tuple[str, str]]  # (old_doc_id, new_doc_id) — auto-transferred moves
     ambiguous_moves: list[dict]              # {hash, desync_ids, new_ids} — need manual resolution
+    new_divergences: list[dict]              # {doc_id, diverged_from} — first-time splits in this run
 ```
 
 ### Move detection
@@ -117,6 +118,31 @@ After merge, reindex detects file moves/renames by matching `content_hash` betwe
    - **No match** → cards are independent, no action
 
 Only enriched desync cards are candidates — unenriched cards have nothing to transfer. Only runs in `mode="update"` (skipped in `clean` and `rebuild`).
+
+### Divergence detection
+
+After move detection, reindex detects cards that have left or re-joined their duplicate groups since the previous run. Only runs in `mode="update"` (skipped in `clean`; in `rebuild` all flags are reset along with enrichment).
+
+**Inputs:**
+- `old_hash_map` = `build_hash_map(existing.documents)` — duplicate groups before the merge
+- `new_hash_map` = `build_hash_map(new_documents)` — duplicate groups after the merge
+
+**Per-card logic** (for every card in `new_documents`):
+
+1. `previous_flag` = the card's prior `diverged_from` value (empty list if never flagged or brand-new).
+2. `old_content_hash` = the card's hash before this reindex (from `existing.documents[doc_id]`), or `None` for brand-new cards.
+3. `old_siblings` = other `doc_id`s that shared `old_content_hash` in the old index (empty if not in a group or brand-new).
+4. `current_copies` = other `doc_id`s sharing the card's current `content_hash` in `new_documents`.
+5. `fresh_drift` = `old_siblings − current_copies` (siblings who didn't follow into the new group). Only meaningful when the hash changed; otherwise `old_siblings == current_copies ∪ nothing`, producing an empty set.
+6. `merged = (previous_flag ∪ fresh_drift) ∩ new_documents.keys() − current_copies` — union existing drift with any fresh drift, drop entries that no longer exist in the index, drop entries that have re-joined the current group.
+7. Set `card.diverged_from = merged if merged else None`.
+8. If `merged` is non-empty AND `previous_flag` was empty → record in `stats.new_divergences` (first-time split in this run).
+
+**Invariants:**
+- Only cards whose hash changed (or were already flagged) can have a non-empty `diverged_from`; unchanged cards with unchanged siblings stay clean.
+- When all original siblings edit in lockstep (group moves together), `fresh_drift` is empty → no flag set.
+- Partial reconvergence (some listed siblings re-match the current hash) narrows the list; full reconvergence clears it.
+- `accept_divergence` explicitly sets `diverged_from = None` without touching `content_hash` or enrichment — complementary to automatic clearing.
 
 ## Internal Functions
 

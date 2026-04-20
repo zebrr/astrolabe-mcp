@@ -68,7 +68,7 @@ astrolabe-mcp/
 | storage.py | done | spec_storage.md | StorageBackend Protocol + create_storage() factory |
 | storage_json.py | done | spec_storage.md | JSON file backend (wraps index.py load/save) |
 | storage_sqlite.py | done | spec_storage.md | SQLite backend (single-row upserts, cloud-safe) |
-| server.py | done | spec_server.md | 8 MCP tools wrapping core functions via StorageBackend |
+| server.py | done | spec_server.md | 10 MCP tools wrapping core functions via StorageBackend |
 | web/ | done | spec_web.md | Local web UI: FastAPI + Jinja2 + HTMX. Card editing, search, doc reader |
 
 ## Dependencies
@@ -82,9 +82,9 @@ models.py ← storage_sqlite.py ← storage.py
                                                                       ← web/state.py ← web/app.py
 ```
 
-## MCP Tools (9)
+## MCP Tools (10)
 
-`get_doc_types`, `get_cosmos`, `list_docs`, `search_docs`, `deep_search`, `get_card`, `read_doc`, `update_index`, `reindex`
+`get_doc_types`, `get_cosmos`, `list_docs`, `search_docs`, `deep_search`, `get_card`, `read_doc`, `update_index`, `reindex`, `accept_divergence`
 
 See `docs/CONCEPT.md` for full tool specifications.
 
@@ -109,3 +109,4 @@ See `docs/CONCEPT.md` for full tool specifications.
 - Web UI (v0.8.0): Local browser interface via FastAPI + Jinja2 + HTMX. Separate process from MCP server, shared storage. Optional `[web]` dependencies. Launch: `.venv/bin/python -m astrolabe.web`. AppState class extracts server.py's global state pattern into a proper class. Card inline editing, markdown doc reader, live search, reindex actions.
 - Semantic search (v0.9.0): Optional ChromaDB-based `deep_search` tool for semantic search over file content. Enabled with `"embeddings": true` in config, requires `pip install astrolabe-mcp[embeddings]`. Files chunked and embedded at reindex time — works even without enrichment. Separate from `search_docs` (fast stem matching) — `deep_search` is on-demand for when keyword search finds too few results. Cross-hints between tools guide the agent. Lazy init — model loaded on first deep_search call.
 - Embeddings local storage (v0.9.2): ChromaDB data stored locally (`runtime/.chromadb/`, configurable via `embeddings_dir`), not on cloud drives — HNSW files are too large for reliable cloud sync. Single backend for all projects (no shared/private split). Manifest-based sync (`manifest.json`) tracks embedded doc_ids + content_hashes — handles first launch, partial embeddings, incremental updates without unnecessary rebuilds. Web UI has no embedding code — only MCP server uses embeddings.
+- Divergence detection (v0.9.3): when a card whose hash previously matched siblings (duplicate group) gets edited, the edited card's `diverged_from` is set to the list of former siblings who no longer share the hash. Detection runs at reindex (update mode), ortogonal to `is_stale`. Only the card whose hash actually changed carries the flag; unchanged siblings stay clean. On subsequent reindex, list narrows when any listed sibling reconverges; full reconvergence clears the flag. Manual resolution via new `accept_divergence(doc_id)` tool for the "intentional fork" case, or natural reconvergence by editing remaining siblings to match.

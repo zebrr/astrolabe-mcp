@@ -297,6 +297,8 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     Use as the first call in a session to understand what's indexed.
     Check desync_documents — if > 0, files missing on disk (run reindex).
     Check stale_documents — if > 0, content changed since enrichment (re-enrich).
+    Check diverged_documents — if > 0, a duplicate group split; ask the user before
+    resolving (use list_docs(diverged=true)).
     Then use list_docs/search_docs to drill into specific projects or topics.
     """
     config, index = _get_state()
@@ -310,6 +312,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             "stale_count": 0,
             "empty_count": 0,
             "desync_count": 0,
+            "diverged_count": 0,
         }
 
     total = len(index.documents)
@@ -317,9 +320,11 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     stale = 0
     empty = 0
     desync = 0
+    diverged = 0
     type_counts: dict[str, int] = {}
 
     for card in index.documents.values():
+        is_diverged = bool(card.diverged_from)
         if card.project in project_stats:
             project_stats[card.project]["doc_count"] += 1
             if not card.is_empty:
@@ -332,6 +337,12 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             if _is_desync(card, config):
                 desync += 1
                 project_stats[card.project]["desync_count"] += 1
+
+            if is_diverged:
+                project_stats[card.project]["diverged_count"] += 1
+
+        if is_diverged:
+            diverged += 1
 
         if card.is_empty:
             empty += 1
@@ -352,6 +363,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             stale_count=stats["stale_count"],
             empty_count=stats["empty_count"],
             desync_count=stats["desync_count"],
+            diverged_count=stats["diverged_count"],
             last_indexed=index.indexed_at,
         )
         for pid, stats in project_stats.items()
@@ -378,6 +390,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
         stale_documents=stale,
         empty_documents=empty,
         desync_documents=desync,
+        diverged_documents=diverged,
         embeddings_enabled=embeddings_enabled,
         embedded_chunks=embedded_chunks,
         projects=projects,
@@ -392,6 +405,7 @@ def list_docs(
     type: str | None = None,
     stale: bool | None = None,
     desync: bool | None = None,
+    diverged: bool | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> dict:  # type: ignore[type-arg]
@@ -408,6 +422,10 @@ def list_docs(
         desync: If true, return only cards whose files are missing on disk
             (deleted or not synced from another machine). Use with project filter
             to diagnose desync in a specific project.
+        diverged: If true, return only cards that used to share content with others
+            but were edited in one place (non-empty diverged_from). Review each and
+            call accept_divergence(doc_id) to accept the split, or sync the other
+            copies so next reindex reconverges them.
         limit: Max cards to return. Default from config (~50).
         offset: Skip first N cards (for pagination).
     """
@@ -428,6 +446,8 @@ def list_docs(
         if stale is True and not (card.is_stale or card.is_empty):
             continue
         if desync is True and not _is_desync(card, config):
+            continue
+        if diverged is True and not card.diverged_from:
             continue
 
         filtered.append(card)
@@ -450,6 +470,8 @@ def list_docs(
         }
         if c.content_hash in hash_map:
             entry["has_copies"] = True
+        if c.diverged_from:
+            entry["diverged_from"] = c.diverged_from
         result.append(entry)
 
     envelope: dict[str, object] = {
@@ -473,6 +495,8 @@ def list_docs(
             applied.append("stale=true")
         if desync is True:
             applied.append("desync=true")
+        if diverged is True:
+            applied.append("diverged=true")
         hint_parts.append(f"Filters: {', '.join(applied)}" if applied else "Filters: none")
 
         # Suggest narrowing by unused axis
@@ -718,6 +742,15 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
     hash_map = build_hash_map(index.documents)
     if card.content_hash in hash_map:
         result["copies"] = [did for did in hash_map[card.content_hash] if did != doc_id]
+
+    # Add divergence info if this card was edited out of a former duplicate group
+    if card.diverged_from:
+        result["diverged_from"] = list(card.diverged_from)
+        result["hint"] = (
+            "This card diverged from its former copies. Ask the user whether to "
+            "accept_divergence(doc_id) (keep the split) or sync the listed siblings "
+            "(next reindex will reconverge them)."
+        )
 
     return result
 
@@ -971,7 +1004,50 @@ def reindex_tool(project: str | None = None, mode: str = "update") -> dict:  # t
         ]
     if stats.ambiguous_moves:
         result["ambiguous_moves"] = stats.ambiguous_moves
+    if stats.new_divergences:
+        result["new_divergences"] = stats.new_divergences
+        result["hint"] = (
+            f"{len(stats.new_divergences)} duplicate group(s) split during this reindex. "
+            "Ask the user: accept_divergence(doc_id) for an intentional fork, "
+            "or edit the other copies so next reindex reconverges them."
+        )
     return result
+
+
+@mcp.tool()
+def accept_divergence(doc_id: str) -> dict:  # type: ignore[type-arg]
+    """Accept that a card has intentionally drifted from its former duplicate group.
+
+    Clears `diverged_from` on the target card. After acceptance the card is
+    treated as an independent document — it keeps its own enrichment cycle and
+    appears separately in search (no dedup with former siblings).
+
+    When NOT to use this: if the edit was a one-off and you want the other copies
+    synced, just edit them to match — the next reindex will reconverge the hashes
+    and clear `diverged_from` automatically.
+
+    Args:
+        doc_id: Document ID (format "project::rel_path") of the diverged card.
+    """
+    _, index = _get_state()
+
+    if doc_id not in index.documents:
+        return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
+
+    card = index.documents[doc_id]
+    if not card.diverged_from:
+        return {
+            "error": f"No divergence to accept: {doc_id}",
+            "hint": "The card is not flagged as diverged. Nothing to do.",
+        }
+
+    cleared = list(card.diverged_from)
+    card.diverged_from = None
+
+    storage = _get_storage_for_project(card.project)
+    storage.save_card(card, index.indexed_at)
+
+    return {"ok": True, "doc_id": doc_id, "cleared_from": cleared}
 
 
 def main() -> None:

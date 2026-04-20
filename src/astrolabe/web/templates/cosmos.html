@@ -11,21 +11,23 @@
     <a href="/cards?stale=true" class="stat-item {% if cosmos.stale_documents > 0 %}stale-bg{% endif %}"><strong>{{ cosmos.stale_documents }}</strong> Stale</a>
     <a href="/cards?empty=true" class="stat-item {% if cosmos.empty_documents > 0 %}empty-bg{% endif %}"><strong>{{ cosmos.empty_documents }}</strong> Empty</a>
     <a href="/cards?desync=true" class="stat-item {% if cosmos.desync_documents > 0 %}desync-bg{% endif %}"><strong>{{ cosmos.desync_documents }}</strong> Desync</a>
+    <a href="/cards?diverged=true" class="stat-item {% if cosmos.diverged_documents > 0 %}diverged-bg{% endif %}"><strong>{{ cosmos.diverged_documents }}</strong> Diverged</a>
 </div>
 
 <!-- Projects table — every cell is a link to filtered cards -->
 <h4>Projects</h4>
 <table class="compact-table cosmos-table">
     <colgroup>
-        <col style="width:40%">
-        <col style="width:12%">
-        <col style="width:12%">
-        <col style="width:12%">
-        <col style="width:12%">
-        <col style="width:12%">
+        <col style="width:35%">
+        <col style="width:11%">
+        <col style="width:11%">
+        <col style="width:11%">
+        <col style="width:11%">
+        <col style="width:11%">
+        <col style="width:10%">
     </colgroup>
     <thead>
-        <tr><th>Project</th><th>Docs</th><th>Enriched</th><th>Stale</th><th>Empty</th><th>Desync</th></tr>
+        <tr><th>Project</th><th>Docs</th><th>Enriched</th><th>Stale</th><th>Empty</th><th>Desync</th><th>Diverged</th></tr>
     </thead>
     <tbody>
         {% for p in cosmos.projects %}
@@ -36,6 +38,7 @@
             <td>{% if p.stale_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&stale=true" class="stale-mark">{{ p.stale_count }}</a>{% else %}0{% endif %}</td>
             <td>{% if p.empty_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&empty=true" class="empty-mark">{{ p.empty_count }}</a>{% else %}0{% endif %}</td>
             <td>{% if p.desync_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&desync=true"><mark>{{ p.desync_count }}</mark></a>{% else %}0{% endif %}</td>
+            <td>{% if p.diverged_count > 0 %}<a href="/cards?project={{ quote(p.id) }}&diverged=true" class="diverged-mark">{{ p.diverged_count }}</a>{% else %}0{% endif %}</td>
         </tr>
         {% endfor %}
     </tbody>

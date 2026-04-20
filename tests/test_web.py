@@ -272,3 +272,45 @@ class TestReindex:
         resp = client.post("/api/refresh")
         assert resp.status_code == 200
         assert "Reloaded" in resp.text
+
+
+class TestAcceptDivergenceEndpoint:
+    def test_accept_clears_flag_and_persists(
+        self, client: TestClient, app_state: AppState
+    ) -> None:
+        card = app_state.index.documents["test-project::README.md"]
+        card.diverged_from = ["other::a.md", "other::b.md"]
+
+        resp = client.post("/api/cards/test-project::README.md/accept-divergence")
+        assert resp.status_code == 200
+        assert "Divergence accepted" in resp.text
+
+        assert app_state.index.documents["test-project::README.md"].diverged_from is None
+        # Persisted to storage
+        reloaded = app_state.storage.load()
+        assert reloaded is not None
+        assert reloaded.documents["test-project::README.md"].diverged_from is None
+
+    def test_accept_without_flag_returns_error(self, client: TestClient) -> None:
+        resp = client.post("/api/cards/test-project::README.md/accept-divergence")
+        assert resp.status_code == 200
+        assert "No divergence" in resp.text
+
+    def test_accept_missing_doc(self, client: TestClient) -> None:
+        resp = client.post("/api/cards/nope::missing.md/accept-divergence")
+        assert resp.status_code == 200
+        assert "not found" in resp.text.lower()
+
+    def test_cards_page_diverged_filter(self, client: TestClient, app_state: AppState) -> None:
+        app_state.index.documents["test-project::README.md"].diverged_from = ["x::y.md"]
+        resp = client.get("/cards?diverged=true")
+        assert resp.status_code == 200
+        assert "README.md" in resp.text
+        # notes.txt is not diverged, so the mark for README should indicate divergence
+        assert "diverged-mark" in resp.text or "Diverged" in resp.text
+
+    def test_cosmos_shows_diverged_counter(self, client: TestClient, app_state: AppState) -> None:
+        app_state.index.documents["test-project::README.md"].diverged_from = ["x::y.md"]
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Diverged" in resp.text

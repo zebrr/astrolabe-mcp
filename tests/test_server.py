@@ -792,3 +792,93 @@ class TestDeepSearch:
         result = srv.search_docs(query="readme")
         assert result["total"] >= 1
         assert result["result"][0]["doc_id"] == "test-project::README.md"
+
+
+class TestAcceptDivergence:
+    def _set_divergence(self, doc_id: str, siblings: list[str]) -> None:
+        """Helper: directly flag a card as diverged (bypassing reindex)."""
+        assert srv._index is not None
+        srv._index.documents[doc_id].diverged_from = siblings
+
+    def test_accept_clears_flag(self, server_env: AppConfig) -> None:
+        self._set_divergence("test-project::README.md", ["other::README.md"])
+        result = srv.accept_divergence("test-project::README.md")
+        assert result == {
+            "ok": True,
+            "doc_id": "test-project::README.md",
+            "cleared_from": ["other::README.md"],
+        }
+        assert srv._index is not None
+        assert srv._index.documents["test-project::README.md"].diverged_from is None
+
+    def test_accept_persists_to_storage(self, server_env: AppConfig) -> None:
+        self._set_divergence("test-project::README.md", ["other::README.md"])
+        srv.accept_divergence("test-project::README.md")
+
+        # Reload index from storage and verify cleared
+        assert srv._storage is not None
+        loaded = srv._storage.load()
+        assert loaded is not None
+        assert loaded.documents["test-project::README.md"].diverged_from is None
+
+    def test_accept_missing_doc(self, server_env: AppConfig) -> None:
+        result = srv.accept_divergence("nope::missing.md")
+        assert "error" in result
+
+    def test_accept_no_divergence_returns_error(self, server_env: AppConfig) -> None:
+        # Card exists but is not flagged
+        result = srv.accept_divergence("test-project::README.md")
+        assert "error" in result
+        assert "No divergence" in result["error"]
+
+
+class TestListDocsDivergedFilter:
+    def test_filter_diverged(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        srv._index.documents["test-project::README.md"].diverged_from = ["other::X.md"]
+
+        all_docs = srv.list_docs()
+        diverged = srv.list_docs(diverged=True)
+        assert diverged["total"] == 1
+        assert diverged["total"] < all_docs["total"]
+        assert diverged["result"][0]["doc_id"] == "test-project::README.md"
+        assert diverged["result"][0]["diverged_from"] == ["other::X.md"]
+
+    def test_diverged_from_in_entry(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        srv._index.documents["test-project::README.md"].diverged_from = ["sib::a.md"]
+        result = srv.list_docs()
+        entries_by_id = {e["doc_id"]: e for e in result["result"]}
+        readme_entry = entries_by_id["test-project::README.md"]
+        assert readme_entry.get("diverged_from") == ["sib::a.md"]
+        # Other (non-diverged) entries should not carry the field
+        other_entry = next(e for e in result["result"] if e["doc_id"] != "test-project::README.md")
+        assert "diverged_from" not in other_entry
+
+
+class TestGetCosmosDivergedCounter:
+    def test_diverged_documents_counter(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        srv._index.documents["test-project::README.md"].diverged_from = ["sib::a.md"]
+
+        result = srv.get_cosmos()
+        assert result["diverged_documents"] == 1
+        per_project = {p["id"]: p for p in result["projects"]}
+        assert per_project["test-project"]["diverged_count"] == 1
+
+    def test_diverged_zero_by_default(self, server_env: AppConfig) -> None:
+        result = srv.get_cosmos()
+        assert result["diverged_documents"] == 0
+
+
+class TestGetCardDivergenceField:
+    def test_diverged_from_in_response(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        srv._index.documents["test-project::README.md"].diverged_from = ["x::y.md"]
+
+        result = srv.get_card("test-project::README.md")
+        assert result.get("diverged_from") == ["x::y.md"]
+
+    def test_diverged_from_absent_when_clean(self, server_env: AppConfig) -> None:
+        result = srv.get_card("test-project::README.md")
+        assert "diverged_from" not in result

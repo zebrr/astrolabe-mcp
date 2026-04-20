@@ -20,6 +20,7 @@ async def cards_partial(
     stale: bool = False,
     empty: bool = False,
     desync: bool = False,
+    diverged: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> Any:
@@ -31,6 +32,7 @@ async def cards_partial(
         stale=stale,
         empty=empty,
         desync=desync,
+        diverged=diverged,
         limit=limit,
         offset=offset,
     )
@@ -52,6 +54,7 @@ async def cards_partial(
             "filter_stale": stale,
             "filter_empty": empty,
             "filter_desync": desync,
+            "filter_diverged": diverged,
         },
     )
 
@@ -225,6 +228,33 @@ async def dismiss_stale(request: Request, doc_id: str) -> Any:
     except KeyError:
         return HTMLResponse("Card not found", status_code=404)
     return HTMLResponse('<span class="ok-mark">ok</span>')
+
+
+@router.post("/cards/{doc_id:path}/accept-divergence", response_class=HTMLResponse)
+async def accept_divergence_route(request: Request, doc_id: str) -> Any:
+    """Clear diverged_from flag on a card — accept the intentional fork."""
+    state = get_state(request)
+    result = state.accept_divergence(doc_id)
+    templates = request.app.state.templates
+    if "error" in result:
+        return templates.TemplateResponse(
+            "partials/toast.html",
+            {
+                "request": request,
+                "message": str(result["error"]),
+                "level": "error",
+                "reload": False,
+            },
+        )
+    return templates.TemplateResponse(
+        "partials/toast.html",
+        {
+            "request": request,
+            "message": f"Divergence accepted ({len(result['cleared_from'])} former siblings).",
+            "level": "success",
+            "reload": True,
+        },
+    )
 
 
 @router.post("/cards/{doc_id:path}/cancel", response_class=HTMLResponse)

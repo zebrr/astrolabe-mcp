@@ -21,6 +21,7 @@
     <label class="filter-check"><input type="checkbox" name="stale" value="true" {% if filter_stale %}checked{% endif %}> Stale ({{ count_stale }})</label>
     <label class="filter-check"><input type="checkbox" name="empty" value="true" {% if filter_empty %}checked{% endif %}> Empty ({{ count_empty }})</label>
     <label class="filter-check"><input type="checkbox" name="desync" value="true" {% if filter_desync %}checked{% endif %}> Desync ({{ count_desync }})</label>
+    <label class="filter-check"><input type="checkbox" name="diverged" value="true" {% if filter_diverged %}checked{% endif %}> Diverged ({{ count_diverged }})</label>
 </form>
 
 <!-- Card list -->

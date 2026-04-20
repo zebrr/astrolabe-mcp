@@ -4,7 +4,7 @@ Status: READY
 
 ## Overview
 
-MCP server exposing 8 tools over stdio transport. Wraps core modules (index, reader, search, config). Auto-reindexes on startup.
+MCP server exposing 10 tools over stdio transport. Wraps core modules (index, reader, search, config). Auto-reindexes on startup.
 
 ## Startup Sequence
 
@@ -24,7 +24,7 @@ MCP server exposing 8 tools over stdio transport. Wraps core modules (index, rea
    - `_save_index()` to persist both storages
 7. Start MCP server on stdio
 
-## MCP Tools (8)
+## MCP Tools (10)
 
 ### `get_doc_types() -> dict[str, dict]`
 
@@ -40,20 +40,23 @@ Entry point. Returns projects, document types, index stats.
 - Uses `config.all_projects` for project stats and desync detection
 - `document_types` from real index (only assigned types), descriptions from doc_types.yaml
 - `desync_documents`: global count of cards where file missing on disk (project in config)
-- Each `ProjectSummary` includes `desync_count` — per-project desync count (runtime file existence check via `_is_desync()`)
+- `diverged_documents`: global count of cards with non-empty `diverged_from`
+- Each `ProjectSummary` includes `desync_count` and `diverged_count` — per-project counts
 
-### `list_docs(project?, type?, stale?, desync?, limit?, offset?) -> dict envelope`
+### `list_docs(project?, type?, stale?, desync?, diverged?, limit?, offset?) -> dict envelope`
 
 List document cards with optional filters and pagination.
 - `limit: int | None = None` — max cards to return. `None` → `config.default_list_limit` (default 50). Agent can override per-call.
 - `offset: int = 0` — skip first N cards. Clamped to >= 0.
 - `stale=true`: only cards where `is_stale or is_empty`
 - `desync=true`: only cards whose files are missing on disk (runtime file existence check via `_is_desync()`)
+- `diverged=true`: only cards with non-empty `diverged_from`
 - Filters are AND-combined: `stale=true, desync=true` returns cards matching both conditions
 - Pass-through cards (project not in config) are never desync
 - Returns envelope: `{total, limit, offset, result: [card_dicts], hint?}`
 - Card dicts contain: doc_id, project, type, filename, summary, keywords. **No timestamps** (modified/enriched_at stripped — use `get_card()` for full metadata).
 - **Content dedup**: cards with duplicates in other locations get `has_copies: true` field. Absent when no copies exist.
+- **Divergence**: cards with non-empty `diverged_from` get the list echoed as `diverged_from: [doc_id, ...]`. Absent when clean.
 - When `total > offset + limit` (truncated): `hint` key with adaptive guidance — shows counts by unused filter axis, suggests narrowing, shows next page offset.
 - Tip in docstring: use `get_cosmos()` first for project overview and counts. Narrow by project/type before browsing.
 
@@ -72,6 +75,7 @@ Search by query with field weights. Delegates to `search.search()`.
 Index card metadata for a specific document. No file content.
 - Includes `stale: bool` flag (true if file content changed since enrichment)
 - **Content dedup**: if document has copies (same `content_hash`), includes `copies: [doc_id, ...]` listing other locations. Absent when no copies exist.
+- **Divergence**: if `diverged_from` is non-empty, includes `diverged_from: [doc_id, ...]` — former siblings whose hash no longer matches. Absent when clean.
 - Raises error if doc_id not found
 
 ### `read_doc(doc_id, section?, range?) -> file content`
@@ -101,7 +105,16 @@ Rescan filesystem. If project given, only rescan that project (rebuild full inde
 - Pass-through cards always preserved regardless of mode
 - Delegates to `index.reindex()`, then `_save_index()` to persist with routing
 - **Single project reindex**: checks `config.all_projects` (not just `config.projects`)
-- Returns stats including `passthrough`, `desync`, and `potential_moves`
+- Returns stats including `passthrough`, `desync`, `auto_transferred`, `ambiguous_moves`, and `new_divergences` (first-time splits detected in this run)
+
+### `accept_divergence(doc_id) -> dict`
+
+Accept a detected divergence for a card. Clears `diverged_from` on the target card, making it behave as an independent document going forward (unique in search, separate enrichment cycle).
+- Raises error if `doc_id` not in index.
+- Returns error-shaped dict (`{"error": ..., "hint": ...}`) if the card has no divergence to accept (`diverged_from` is None/empty).
+- On success: sets `card.diverged_from = None`, persists via `_save_index()`, returns `{"ok": true, "doc_id": ..., "cleared_from": [...]}`.
+- Does NOT re-embed, re-enrich, or alter `content_hash` — stale/embedding cycles are independent axes.
+- The natural alternative (edit remaining siblings to match) clears `diverged_from` automatically on next `reindex()` when hashes reconverge; `accept_divergence` is for the "intentional fork" case.
 
 ## Error Handling
 

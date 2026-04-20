@@ -35,6 +35,7 @@ class ReindexStats:
     embedding_errors: int = 0
     auto_transferred: list[tuple[str, str]] = field(default_factory=list)
     ambiguous_moves: list[dict[str, object]] = field(default_factory=list)
+    new_divergences: list[dict[str, object]] = field(default_factory=list)
     # Internal tracking for embedding sync (not serialized in tool output)
     _new_doc_ids: set[str] = field(default_factory=set)
     _stale_doc_ids: set[str] = field(default_factory=set)
@@ -315,6 +316,58 @@ def reindex(
                         "hash": content_hash,
                         "desync_ids": desync_ids,
                         "new_ids": new_ids,
+                    }
+                )
+
+    # Divergence detection: flag cards whose hash left their duplicate group.
+    # Only runs in update mode (clean/rebuild don't preserve divergence state;
+    # rebuild resets enrichment, so any prior diverged_from is already gone).
+    if mode == "update":
+        old_hash_all: dict[str, list[str]] = {}
+        for did, existing_card in existing.documents.items():
+            old_hash_all.setdefault(existing_card.content_hash, []).append(did)
+
+        new_hash_all: dict[str, list[str]] = {}
+        for did, merged_card in new_documents.items():
+            new_hash_all.setdefault(merged_card.content_hash, []).append(did)
+
+        new_doc_ids = set(new_documents.keys())
+
+        for doc_id, merged_card in new_documents.items():
+            prior_card = existing.documents.get(doc_id)
+            previous_flag = list(prior_card.diverged_from or []) if prior_card else []
+
+            # Only flag cards whose content_hash changed since the last reindex.
+            # Unchanged cards keep their existing flag (cleaned up below), never
+            # acquire a new one — the "child of the edit" is the signal source.
+            hash_changed = (
+                prior_card is None or prior_card.content_hash != merged_card.content_hash
+            )
+
+            current_copies_set = {
+                s for s in new_hash_all.get(merged_card.content_hash, []) if s != doc_id
+            }
+
+            if hash_changed and prior_card is not None:
+                old_siblings = [
+                    s for s in old_hash_all.get(prior_card.content_hash, []) if s != doc_id
+                ]
+                fresh_drift = [s for s in old_siblings if s not in current_copies_set]
+            else:
+                fresh_drift = []
+
+            divergence_set = set(previous_flag) | set(fresh_drift)
+            divergence_list = sorted(
+                s for s in divergence_set if s in new_doc_ids and s not in current_copies_set
+            )
+
+            merged_card.diverged_from = divergence_list if divergence_list else None
+
+            if divergence_list and not previous_flag:
+                stats.new_divergences.append(
+                    {
+                        "doc_id": doc_id,
+                        "diverged_from": divergence_list,
                     }
                 )
 

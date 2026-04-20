@@ -28,6 +28,7 @@ Astrolabe is a **dumb server + smart agent** architecture. The server only walks
 - **Zero-intrusion** — no frontmatter, no changes to your project files
 - **Semantic search** — optional `deep_search` via ChromaDB embeddings, finds documents by meaning even without enrichment
 - **Web UI** — local browser interface for browsing, searching, and editing index cards with markdown rendering
+- **Divergence tracking** — detects when one copy of a duplicated document is edited while others stay behind, flags the split for manual resolution via `accept_divergence()` or natural reconvergence on the next reindex
 
 ## Quick Start
 
@@ -239,13 +240,14 @@ Each query token and each word in a field are stemmed with both EN and RU Snowba
 |------|-------------|
 | `get_doc_types()` | Document type vocabulary from doc_types.yaml (descriptions + examples) |
 | `get_cosmos()` | Entry point. Projects, document types, index stats |
-| `list_docs(project?, type?, stale?, desync?, limit?, offset?)` | List document cards with filters and pagination |
+| `list_docs(project?, type?, stale?, desync?, diverged?, limit?, offset?)` | List document cards with filters and pagination |
 | `search_docs(query, project?, type?, max_results?)` | Fast keyword search with relevance ranking |
 | `deep_search(query, project?, max_results?)` | Semantic search over file content (requires `embeddings: true`) |
 | `get_card(doc_id)` | Index card metadata — type, summary, keywords (no file content) |
 | `read_doc(doc_id, section?, range?)` | Read file content — full, by heading, or line range |
 | `update_index_tool(doc_id, type?, summary?, keywords?, headings?)` | Enrich a card (type validated against doc_types.yaml) |
 | `reindex_tool(project?, mode?)` | Rescan filesystem. `mode`: `update` (default) / `clean` (remove missing) / `rebuild` (reset all) |
+| `accept_divergence(doc_id)` | Accept that a previously-duplicated document was intentionally edited out of its group. Clears `diverged_from` flag |
 
 **doc_id format:** `project::rel_path` — e.g., `web-app::docs/API.md`.
 

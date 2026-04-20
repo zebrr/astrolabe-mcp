@@ -33,6 +33,7 @@ async def cards_page(
     stale: bool = False,
     empty: bool = False,
     desync: bool = False,
+    diverged: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> Any:
@@ -47,6 +48,7 @@ async def cards_page(
         stale=stale,
         empty=empty,
         desync=desync,
+        diverged=diverged,
         limit=limit,
         offset=offset,
     )
@@ -59,6 +61,7 @@ async def cards_page(
     count_stale = 0
     count_empty = 0
     count_desync = 0
+    count_diverged = 0
     for c in state.index.documents.values():
         if project is not None and c.project != project:
             continue
@@ -70,6 +73,8 @@ async def cards_page(
             count_empty += 1
         if state.is_desync(c):
             count_desync += 1
+        if c.diverged_from:
+            count_diverged += 1
 
     templates = request.app.state.templates
     return templates.TemplateResponse(
@@ -85,9 +90,11 @@ async def cards_page(
             "filter_stale": stale,
             "filter_empty": empty,
             "filter_desync": desync,
+            "filter_diverged": diverged,
             "count_stale": count_stale,
             "count_empty": count_empty,
             "count_desync": count_desync,
+            "count_diverged": count_diverged,
             "limit": limit,
             "offset": offset,
             "quote": quote,

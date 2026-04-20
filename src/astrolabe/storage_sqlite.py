@@ -36,19 +36,20 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 CREATE TABLE IF NOT EXISTS documents (
-    doc_id       TEXT PRIMARY KEY,
-    project      TEXT NOT NULL,
-    filename     TEXT NOT NULL,
-    rel_path     TEXT NOT NULL,
-    size         INTEGER NOT NULL,
-    modified     TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    type         TEXT,
-    headings     TEXT,
-    summary      TEXT,
-    keywords     TEXT,
-    enriched_at  TEXT,
-    enriched_content_hash TEXT
+    doc_id                TEXT PRIMARY KEY,
+    project               TEXT NOT NULL,
+    filename              TEXT NOT NULL,
+    rel_path              TEXT NOT NULL,
+    size                  INTEGER NOT NULL,
+    modified              TEXT NOT NULL,
+    content_hash          TEXT NOT NULL,
+    type                  TEXT,
+    headings              TEXT,
+    summary               TEXT,
+    keywords              TEXT,
+    enriched_at           TEXT,
+    enriched_content_hash TEXT,
+    diverged_from         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_project ON documents(project);
@@ -72,6 +73,7 @@ def _card_to_row(card: DocCard) -> tuple[object, ...]:
         json.dumps(card.keywords) if card.keywords is not None else None,
         card.enriched_at.isoformat() if card.enriched_at is not None else None,
         card.enriched_content_hash,
+        json.dumps(card.diverged_from) if card.diverged_from else None,
     )
 
 
@@ -80,6 +82,7 @@ def _row_to_card(row: sqlite3.Row) -> DocCard:
     headings_raw = row["headings"]
     keywords_raw = row["keywords"]
     enriched_raw = row["enriched_at"]
+    diverged_raw = row["diverged_from"]
 
     return DocCard(
         project=row["project"],
@@ -94,6 +97,7 @@ def _row_to_card(row: sqlite3.Row) -> DocCard:
         keywords=json.loads(keywords_raw) if keywords_raw is not None else None,
         enriched_at=datetime.fromisoformat(enriched_raw) if enriched_raw is not None else None,
         enriched_content_hash=row["enriched_content_hash"],
+        diverged_from=json.loads(diverged_raw) if diverged_raw else None,
     )
 
 
@@ -101,8 +105,8 @@ _INSERT_SQL = """\
 INSERT OR REPLACE INTO documents
     (doc_id, project, filename, rel_path, size, modified,
      content_hash, type, headings, summary, keywords, enriched_at,
-     enriched_content_hash)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     enriched_content_hash, diverged_from)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -124,6 +128,9 @@ class SqliteStorage:
         # Migrate existing databases: add enriched_content_hash column
         with contextlib.suppress(sqlite3.OperationalError):
             self._conn.execute("ALTER TABLE documents ADD COLUMN enriched_content_hash TEXT")
+        # Migrate existing databases: add diverged_from column
+        with contextlib.suppress(sqlite3.OperationalError):
+            self._conn.execute("ALTER TABLE documents ADD COLUMN diverged_from TEXT")
 
     def _retry_write(self, fn: Callable[[], None]) -> None:
         """Execute a write operation with retry on transient errors.

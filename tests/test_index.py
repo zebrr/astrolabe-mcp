@@ -995,3 +995,171 @@ class TestListFilesRglob:
         names = {p.name for p in result}
         assert "real.md" in names
         assert "link.md" not in names
+
+
+def _make_multiproject_config(tmp_path: Path, project_names: list[str]) -> AppConfig:
+    """Helper: create empty project dirs for multiple projects."""
+    projects = {}
+    for name in project_names:
+        p = tmp_path / name
+        p.mkdir()
+        projects[name] = p
+    return AppConfig(
+        projects=projects,
+        index_dir=tmp_path,
+        index_extensions=[".md"],
+        ignore_dirs=[],
+        ignore_files=[],
+        max_file_size_kb=100,
+    )
+
+
+class TestDivergenceDetection:
+    def test_split_of_three_copies(self, tmp_path: Path) -> None:
+        """3 copies, edit one: the edited card gets diverged_from listing the others."""
+        config = _make_multiproject_config(tmp_path, ["a", "b", "c"])
+        shared = "# Shared content\n"
+        for name in ("a", "b", "c"):
+            (config.projects[name] / "doc.md").write_text(shared)
+
+        index, _ = reindex(config)
+        # All three share hash — should all be in the same duplicate group
+        first_hash = index.documents["a::doc.md"].content_hash
+        assert all(c.content_hash == first_hash for c in index.documents.values())
+        # No divergence initially
+        assert all(c.diverged_from is None for c in index.documents.values())
+
+        # Edit one
+        (config.projects["a"] / "doc.md").write_text("# Different content now\n")
+        index2, stats = reindex(config, existing=index)
+
+        a = index2.documents["a::doc.md"]
+        b = index2.documents["b::doc.md"]
+        c = index2.documents["c::doc.md"]
+
+        assert a.diverged_from == ["b::doc.md", "c::doc.md"]
+        assert b.diverged_from is None
+        assert c.diverged_from is None
+
+        assert len(stats.new_divergences) == 1
+        assert stats.new_divergences[0]["doc_id"] == "a::doc.md"
+        assert stats.new_divergences[0]["diverged_from"] == ["b::doc.md", "c::doc.md"]
+
+    def test_group_moves_together_no_divergence(self, tmp_path: Path) -> None:
+        """All copies edited identically: no divergence, group just moved to new hash."""
+        config = _make_multiproject_config(tmp_path, ["a", "b", "c"])
+        for name in ("a", "b", "c"):
+            (config.projects[name] / "doc.md").write_text("# Original\n")
+
+        index, _ = reindex(config)
+
+        for name in ("a", "b", "c"):
+            (config.projects[name] / "doc.md").write_text("# Updated together\n")
+
+        index2, stats = reindex(config, existing=index)
+
+        assert all(c.diverged_from is None for c in index2.documents.values())
+        assert stats.new_divergences == []
+
+    def test_unique_doc_not_flagged(self, tmp_path: Path) -> None:
+        """A doc that was never a duplicate shouldn't get a divergence flag when edited."""
+        config = _make_multiproject_config(tmp_path, ["a"])
+        (config.projects["a"] / "doc.md").write_text("# Unique\n")
+        index, _ = reindex(config)
+
+        (config.projects["a"] / "doc.md").write_text("# Edited\n")
+        index2, stats = reindex(config, existing=index)
+
+        assert index2.documents["a::doc.md"].diverged_from is None
+        assert stats.new_divergences == []
+
+    def test_full_reconvergence_clears_flag(self, tmp_path: Path) -> None:
+        """After one sibling is edited back to match, diverged_from clears."""
+        config = _make_multiproject_config(tmp_path, ["a", "b"])
+        (config.projects["a"] / "doc.md").write_text("original\n")
+        (config.projects["b"] / "doc.md").write_text("original\n")
+        index, _ = reindex(config)
+
+        # Edit a → divergence appears
+        (config.projects["a"] / "doc.md").write_text("edited\n")
+        index2, stats2 = reindex(config, existing=index)
+        assert index2.documents["a::doc.md"].diverged_from == ["b::doc.md"]
+        assert index2.documents["b::doc.md"].diverged_from is None
+        assert len(stats2.new_divergences) == 1
+
+        # Edit b to match a → divergence clears on a
+        (config.projects["b"] / "doc.md").write_text("edited\n")
+        index3, stats3 = reindex(config, existing=index2)
+        assert index3.documents["a::doc.md"].diverged_from is None
+        assert index3.documents["b::doc.md"].diverged_from is None
+        # b's edit does not create a new divergence (it converges into a's group)
+        assert stats3.new_divergences == []
+
+    def test_partial_convergence_narrows_list(self, tmp_path: Path) -> None:
+        """5 copies, edit 4 to new value, leave 1: each of the 4 diverges from the 1."""
+        config = _make_multiproject_config(tmp_path, ["a", "b", "c", "d", "e"])
+        for name in ("a", "b", "c", "d", "e"):
+            (config.projects[name] / "doc.md").write_text("original\n")
+        index, _ = reindex(config)
+
+        # Edit 4 of them to a new value, leave "e" behind
+        for name in ("a", "b", "c", "d"):
+            (config.projects[name] / "doc.md").write_text("new content\n")
+        index2, stats = reindex(config, existing=index)
+
+        # Each of the 4 edited cards diverges from "e::doc.md" only
+        for name in ("a", "b", "c", "d"):
+            assert index2.documents[f"{name}::doc.md"].diverged_from == ["e::doc.md"]
+        # e wasn't edited, no flag
+        assert index2.documents["e::doc.md"].diverged_from is None
+        # 4 new divergences recorded
+        assert len(stats.new_divergences) == 4
+
+    def test_non_existent_doc_ids_cleaned_up(self, tmp_path: Path) -> None:
+        """diverged_from entries pointing at removed doc_ids are filtered out at reindex."""
+        config = _make_multiproject_config(tmp_path, ["a", "b"])
+        (config.projects["a"] / "doc.md").write_text("original\n")
+        (config.projects["b"] / "doc.md").write_text("original\n")
+        index, _ = reindex(config)
+
+        # Edit a → divergence appears
+        (config.projects["a"] / "doc.md").write_text("edited\n")
+        index2, _ = reindex(config, existing=index)
+        assert index2.documents["a::doc.md"].diverged_from == ["b::doc.md"]
+
+        # Remove the b project file; reindex in clean mode drops the desync card
+        (config.projects["b"] / "doc.md").unlink()
+        index3, _ = reindex(config, existing=index2, mode="clean")
+        # Back to update mode: a's flag should no longer reference the deleted b
+        index4, _ = reindex(config, existing=index3)
+        assert index4.documents["a::doc.md"].diverged_from is None
+
+    def test_clean_mode_skips_detection(self, tmp_path: Path) -> None:
+        """Divergence detection only runs in update mode (like move detection)."""
+        config = _make_multiproject_config(tmp_path, ["a", "b"])
+        (config.projects["a"] / "doc.md").write_text("original\n")
+        (config.projects["b"] / "doc.md").write_text("original\n")
+        index, _ = reindex(config)
+
+        (config.projects["a"] / "doc.md").write_text("edited\n")
+        index2, stats = reindex(config, existing=index, mode="clean")
+
+        assert stats.new_divergences == []
+        # In clean mode, the flag is simply not set (no detection pass)
+        assert index2.documents["a::doc.md"].diverged_from is None
+
+    def test_persistent_flag_not_re_reported(self, tmp_path: Path) -> None:
+        """A card that was already diverged doesn't re-appear in stats.new_divergences."""
+        config = _make_multiproject_config(tmp_path, ["a", "b"])
+        (config.projects["a"] / "doc.md").write_text("original\n")
+        (config.projects["b"] / "doc.md").write_text("original\n")
+        index, _ = reindex(config)
+
+        (config.projects["a"] / "doc.md").write_text("edited\n")
+        index2, stats2 = reindex(config, existing=index)
+        assert len(stats2.new_divergences) == 1
+
+        # Reindex again without further edits — flag persists, not re-reported
+        index3, stats3 = reindex(config, existing=index2)
+        assert index3.documents["a::doc.md"].diverged_from == ["b::doc.md"]
+        assert stats3.new_divergences == []
