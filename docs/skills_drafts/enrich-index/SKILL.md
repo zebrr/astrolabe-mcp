@@ -33,7 +33,8 @@ Batch-enrich document cards in the astrolabe index. You read each file, understa
       - **summary** — 1-2 sentence description of what the file contains and why it matters (see Writing Good Summaries)
       - **keywords** — 5-15 keywords for search (see Writing Good Keywords)
       - **headings** — extract verbatim ATX markdown headings from the content (see Extracting Headings)
-   d. Call `update_index_tool(doc_id, type=..., summary=..., keywords=[...], headings=[...])`
+      - **date** — semantic content date if clearly present (see Extracting Date). Optional; omit if not found.
+   d. Call `update_index_tool(doc_id, type=..., summary=..., keywords=[...], headings=[...], date="YYYY-MM-DD")` — `date` omitted if no date was extracted
 5. After finishing all cards, report: how many enriched, any errors
 
 ## Classification Rules
@@ -73,7 +74,39 @@ Use ONLY types from the `get_doc_types()` vocabulary. If a file does not fit any
 **Temporal markers:** If a document has a clear date context (meeting notes, reports, changelogs, plans), add date keywords in multiple formats:
 `["2025-11", "ноябрь 2025", "november 2025"]`
 
+Note: if the document has a specific date, also pass it via the `date` field (see Extracting Date). Date keywords and the `date` field complement each other — keywords help fuzzy/multilingual search, `date` enables strict range filtering and chronological sort.
+
 **Bad:** `["code", "python", "file", "important"]`
+
+## Extracting Date
+
+Some documents carry a meaningful **content date** — a statement period, a receipt date, a report date, a meeting date. When such a date is clearly present in the document (usually in the header or footer), pass it via the `date` field.
+
+**Format:** strictly `YYYY-MM-DD`. The server rejects any other format.
+
+**Rules:**
+- Only fill `date` when you can extract a **full** day (year, month, day). If the document only mentions "ноябрь 2025" or "2025" without a day — omit the field. Don't guess or pad.
+- For documents covering a **range** (e.g. bank statement from 01.11.2025 to 30.11.2025) — use the **end date** (`2025-11-30`). The end date conveys the document's actual "as of" point.
+- Translate local date formats (`30.11.2025`, `30 ноября 2025 г.`, `November 30, 2025`) into canonical `YYYY-MM-DD`.
+- Do NOT use the file's mtime, nor the current date. The date must come from the document's content.
+- If multiple candidate dates exist and none clearly dominates, omit the field.
+
+**When to use:**
+- Statements, receipts, invoices (→ issuance/period end date)
+- Reports, minutes (→ meeting / report date)
+- Signed documents (→ signature date)
+- Snapshots with explicit "as of" date
+
+**When to skip:**
+- General reference documents with no specific date
+- Plans, designs, specifications (they evolve — use git instead)
+- Documents with only year or month-level granularity
+
+**Examples:**
+- Bank statement "за период 01.11.2025 — 30.11.2025" → `date="2025-11-30"`
+- Receipt "Issued: March 15, 2026" → `date="2026-03-15"`
+- Meeting minutes "15.04.2026" → `date="2026-04-15"`
+- General README with no date → omit
 
 ## Extracting Headings
 

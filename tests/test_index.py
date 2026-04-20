@@ -307,6 +307,135 @@ class TestUpdateCard:
         with pytest.raises(KeyError, match="ghost::doc.md"):
             update_card(index, "ghost::doc.md", type="spec")
 
+    def test_update_date(self) -> None:
+        card = DocCard(
+            project="proj",
+            filename="doc.md",
+            rel_path="doc.md",
+            size=100,
+            modified=datetime(2026, 3, 6, tzinfo=UTC),
+            content_hash="abc",
+        )
+        index = IndexData(
+            indexed_at=datetime(2026, 3, 6, tzinfo=UTC),
+            documents={card.doc_id: card},
+        )
+
+        updated = update_card(index, "proj::doc.md", date="2025-11-30")
+        assert updated.date == "2025-11-30"
+        assert updated.enriched_at is not None
+
+    def test_update_date_omitted_preserves_existing(self) -> None:
+        card = DocCard(
+            project="proj",
+            filename="doc.md",
+            rel_path="doc.md",
+            size=100,
+            modified=datetime(2026, 3, 6, tzinfo=UTC),
+            content_hash="abc",
+            date="2025-11-30",
+        )
+        index = IndexData(
+            indexed_at=datetime(2026, 3, 6, tzinfo=UTC),
+            documents={card.doc_id: card},
+        )
+
+        # Updating other fields without touching date keeps old date
+        updated = update_card(index, "proj::doc.md", summary="New summary")
+        assert updated.date == "2025-11-30"
+        assert updated.summary == "New summary"
+
+    def test_update_date_empty_string_clears(self) -> None:
+        """`date=""` is the explicit clear sentinel."""
+        card = DocCard(
+            project="proj",
+            filename="doc.md",
+            rel_path="doc.md",
+            size=100,
+            modified=datetime(2026, 3, 6, tzinfo=UTC),
+            content_hash="abc",
+            date="2025-11-30",
+        )
+        index = IndexData(
+            indexed_at=datetime(2026, 3, 6, tzinfo=UTC),
+            documents={card.doc_id: card},
+        )
+
+        updated = update_card(index, "proj::doc.md", date="")
+        assert updated.date is None
+
+    def test_update_date_empty_string_on_empty_field_is_noop(self) -> None:
+        """Clearing an already-empty date field leaves it None."""
+        card = DocCard(
+            project="proj",
+            filename="doc.md",
+            rel_path="doc.md",
+            size=100,
+            modified=datetime(2026, 3, 6, tzinfo=UTC),
+            content_hash="abc",
+        )
+        index = IndexData(
+            indexed_at=datetime(2026, 3, 6, tzinfo=UTC),
+            documents={card.doc_id: card},
+        )
+
+        updated = update_card(index, "proj::doc.md", date="")
+        assert updated.date is None
+
+
+class TestReindexPreservesDate:
+    def test_date_preserved_when_file_changes(self, tmp_path: Path) -> None:
+        """When file content changes, reindex must preserve the date field."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "statement.md").write_text("original content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+
+        # Initial reindex
+        index, _ = reindex(config)
+        doc_id = "proj::statement.md"
+
+        # Enrich with date
+        update_card(index, doc_id, type="reference", date="2025-11-30")
+        assert index.documents[doc_id].date == "2025-11-30"
+
+        # File changes
+        (proj / "statement.md").write_text("modified content")
+
+        # Reindex in update mode: date should survive
+        new_index, _ = reindex(config, index, mode="update")
+        assert new_index.documents[doc_id].date == "2025-11-30"
+
+    def test_date_reset_in_rebuild_mode(self, tmp_path: Path) -> None:
+        """Rebuild mode resets enrichment including date."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "doc.md").write_text("content")
+
+        config = AppConfig(
+            projects={"proj": proj},
+            index_dir=tmp_path,
+            index_extensions=[".md"],
+            ignore_dirs=[],
+            ignore_files=[],
+            max_file_size_kb=100,
+        )
+
+        index, _ = reindex(config)
+        doc_id = "proj::doc.md"
+        update_card(index, doc_id, type="reference", date="2025-11-30")
+
+        new_index, _ = reindex(config, index, mode="rebuild")
+        assert new_index.documents[doc_id].date is None
+
 
 class TestPassthrough:
     def test_foreign_project_cards_preserved(self, tmp_path: Path) -> None:

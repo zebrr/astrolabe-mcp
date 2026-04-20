@@ -14,6 +14,7 @@ from astrolabe.config import load_config, load_doc_types_full
 from astrolabe.embeddings import EmbeddingBackend, EmbeddingResult, is_embeddings_available
 from astrolabe.index import ReindexStats, build_hash_map, build_index, reindex, update_card
 from astrolabe.models import (
+    DATE_RE,
     AppConfig,
     CosmosResponse,
     DocCard,
@@ -28,6 +29,15 @@ from astrolabe.storage import StorageBackend, create_storage, create_storage_at
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("astrolabe")
+
+
+def _invalid_date_error(field: str, value: str) -> dict[str, str]:
+    """Return a uniform error dict for invalid date format."""
+    return {
+        "error": f"Invalid {field} format '{value}'. Expected YYYY-MM-DD.",
+        "hint": "Use strict format YYYY-MM-DD, e.g. '2025-11-30'.",
+    }
+
 
 # Global state
 _config: AppConfig | None = None
@@ -299,6 +309,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     Check stale_documents — if > 0, content changed since enrichment (re-enrich).
     Check diverged_documents — if > 0, a duplicate group split; ask the user before
     resolving (use list_docs(diverged=true)).
+    dated_documents counts cards with a semantic `date` (e.g. statements, receipts).
     Then use list_docs/search_docs to drill into specific projects or topics.
     """
     config, index = _get_state()
@@ -313,6 +324,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             "empty_count": 0,
             "desync_count": 0,
             "diverged_count": 0,
+            "dated_count": 0,
         }
 
     total = len(index.documents)
@@ -321,10 +333,12 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
     empty = 0
     desync = 0
     diverged = 0
+    dated = 0
     type_counts: dict[str, int] = {}
 
     for card in index.documents.values():
         is_diverged = bool(card.diverged_from)
+        has_date = card.date is not None
         if card.project in project_stats:
             project_stats[card.project]["doc_count"] += 1
             if not card.is_empty:
@@ -341,8 +355,14 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             if is_diverged:
                 project_stats[card.project]["diverged_count"] += 1
 
+            if has_date:
+                project_stats[card.project]["dated_count"] += 1
+
         if is_diverged:
             diverged += 1
+
+        if has_date:
+            dated += 1
 
         if card.is_empty:
             empty += 1
@@ -364,6 +384,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
             empty_count=stats["empty_count"],
             desync_count=stats["desync_count"],
             diverged_count=stats["diverged_count"],
+            dated_count=stats["dated_count"],
             last_indexed=index.indexed_at,
         )
         for pid, stats in project_stats.items()
@@ -391,6 +412,7 @@ def get_cosmos() -> dict:  # type: ignore[type-arg]
         empty_documents=empty,
         desync_documents=desync,
         diverged_documents=diverged,
+        dated_documents=dated,
         embeddings_enabled=embeddings_enabled,
         embedded_chunks=embedded_chunks,
         projects=projects,
@@ -406,6 +428,9 @@ def list_docs(
     stale: bool | None = None,
     desync: bool | None = None,
     diverged: bool | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sort: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> dict:  # type: ignore[type-arg]
@@ -426,12 +451,28 @@ def list_docs(
             but were edited in one place (non-empty diverged_from). Review each and
             call accept_divergence(doc_id) to accept the split, or sync the other
             copies so next reindex reconverges them.
+        date_from: Inclusive lower bound on card.date (YYYY-MM-DD). Cards without
+            date are excluded when date_from/date_to is set.
+        date_to: Inclusive upper bound on card.date (YYYY-MM-DD).
+        sort: "date_desc" or "date_asc" to sort by content date. Cards without
+            date sort to the end. Default: insertion order.
         limit: Max cards to return. Default from config (~50).
         offset: Skip first N cards (for pagination).
     """
     config, index = _get_state()
     effective_limit = limit if limit is not None else config.default_list_limit
     offset = max(0, offset)
+
+    # Validate date bounds
+    if date_from is not None and not DATE_RE.match(date_from):
+        return _invalid_date_error("date_from", date_from)
+    if date_to is not None and not DATE_RE.match(date_to):
+        return _invalid_date_error("date_to", date_to)
+    if sort is not None and sort not in ("date_desc", "date_asc"):
+        return {
+            "error": f"Invalid sort '{sort}'. Expected 'date_desc' or 'date_asc'.",
+            "hint": "Omit sort for insertion order, or use date_desc/date_asc.",
+        }
 
     # Collect all filtered cards + counts for hints
     filtered: list[DocCard] = []
@@ -449,10 +490,23 @@ def list_docs(
             continue
         if diverged is True and not card.diverged_from:
             continue
+        if (date_from is not None or date_to is not None) and card.date is None:
+            continue
+        if date_from is not None and card.date is not None and card.date < date_from:
+            continue
+        if date_to is not None and card.date is not None and card.date > date_to:
+            continue
 
         filtered.append(card)
         type_counts[card.type] = type_counts.get(card.type, 0) + 1
         project_counts[card.project] = project_counts.get(card.project, 0) + 1
+
+    # Apply sort (cards with date=None always go last regardless of direction)
+    if sort in ("date_desc", "date_asc"):
+        dated_cards = [c for c in filtered if c.date is not None]
+        undated = [c for c in filtered if c.date is None]
+        dated_cards.sort(key=lambda c: c.date or "", reverse=(sort == "date_desc"))
+        filtered = dated_cards + undated
 
     total = len(filtered)
     page = filtered[offset : offset + effective_limit]
@@ -468,6 +522,8 @@ def list_docs(
             "summary": c.summary,
             "keywords": c.keywords,
         }
+        if c.date is not None:
+            entry["date"] = c.date
         if c.content_hash in hash_map:
             entry["has_copies"] = True
         if c.diverged_from:
@@ -529,6 +585,9 @@ def search_docs(
     query: str,
     project: str | None = None,
     type: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    sort: str = "relevance",
     max_results: int | None = None,
 ) -> dict:  # type: ignore[type-arg]
     """Search documents by query with relevance ranking.
@@ -541,10 +600,26 @@ def search_docs(
         query: Search query (e.g. "telegram api", "architecture guide").
         project: Filter by project ID.
         type: Filter by document type.
+        date_from: Inclusive lower bound on card.date (YYYY-MM-DD). Cards without
+            date are excluded when date_from/date_to is set.
+        date_to: Inclusive upper bound on card.date (YYYY-MM-DD).
+        sort: "relevance" (default), "date_desc", or "date_asc". On date sorts,
+            cards without date go to the end; relevance is a tiebreaker.
         max_results: Max results to return. Default from config (~20).
     """
     config, index = _get_state()
     effective_max = max_results if max_results is not None else config.default_search_limit
+
+    # Validate date bounds and sort
+    if date_from is not None and not DATE_RE.match(date_from):
+        return _invalid_date_error("date_from", date_from)
+    if date_to is not None and not DATE_RE.match(date_to):
+        return _invalid_date_error("date_to", date_to)
+    if sort not in ("relevance", "date_desc", "date_asc"):
+        return {
+            "error": f"Invalid sort '{sort}'. Expected 'relevance', 'date_desc', or 'date_asc'.",
+            "hint": "Default is 'relevance'.",
+        }
 
     type_boosts = {
         name: entry.get("search_boost", 1.0)
@@ -553,7 +628,13 @@ def search_docs(
     }
 
     results = search(
-        index.documents.values(), query, project=project, type=type, type_boosts=type_boosts
+        index.documents.values(),
+        query,
+        project=project,
+        type=type,
+        type_boosts=type_boosts,
+        date_from=date_from,
+        date_to=date_to,
     )
 
     # Dedup by content_hash: keep first (highest relevance) per hash
@@ -570,11 +651,27 @@ def search_docs(
             deduped.append(r)
         results = deduped
 
+    # Re-sort if date sort requested; relevance becomes tiebreaker
+    if sort in ("date_desc", "date_asc"):
+        card_date: dict[str, str | None] = {
+            r.doc_id: index.documents[r.doc_id].date if r.doc_id in index.documents else None
+            for r in results
+        }
+        dated = [r for r in results if card_date.get(r.doc_id) is not None]
+        undated = [r for r in results if card_date.get(r.doc_id) is None]
+        if sort == "date_desc":
+            dated.sort(key=lambda r: (card_date[r.doc_id] or "", r.relevance), reverse=True)
+        else:
+            # date_asc: earliest first, but within same date, higher relevance first
+            dated.sort(key=lambda r: (card_date[r.doc_id] or "", -r.relevance))
+        results = dated + undated
+
     total = len(results)
     page = results[:effective_max]
 
-    result = [
-        {
+    result = []
+    for r in page:
+        entry: dict[str, object] = {
             "doc_id": r.doc_id,
             "project": r.project,
             "type": r.type,
@@ -583,8 +680,10 @@ def search_docs(
             "keywords": r.keywords,
             "relevance": r.relevance,
         }
-        for r in page
-    ]
+        card = index.documents.get(r.doc_id)
+        if card is not None and card.date is not None:
+            entry["date"] = card.date
+        result.append(entry)
 
     envelope: dict[str, object] = {
         "total": total,
@@ -737,6 +836,8 @@ def get_card(doc_id: str) -> dict:  # type: ignore[type-arg]
         "enriched_content_hash": card.enriched_content_hash,
         "stale": card.is_stale,
     }
+    if card.date is not None:
+        result["date"] = card.date
 
     # Add copies if this document has duplicates in other locations
     hash_map = build_hash_map(index.documents)
@@ -833,8 +934,9 @@ def update_index_tool(
     summary: str | None = None,
     keywords: list[str] | None = None,
     headings: list[str] | None = None,
+    date: str | None = None,
 ) -> dict:  # type: ignore[type-arg]
-    """Enrich a document card with type, summary, keywords, and headings.
+    """Enrich a document card with type, summary, keywords, headings, and optional date.
 
     Call this after reading a document to fill in its metadata.
     Only updates fields that are provided — others remain unchanged.
@@ -846,6 +948,9 @@ def update_index_tool(
         summary: Brief description (2-3 sentences).
         keywords: Search keywords.
         headings: Document headings.
+        date: Semantic content date in strict YYYY-MM-DD format (optional).
+            Use the end date for documents covering a range. Omit if not
+            clearly present in the document. Pass "" to clear an existing date.
     """
     _, index = _get_state()
 
@@ -857,9 +962,19 @@ def update_index_tool(
             "hint": "Use get_doc_types() to see the full vocabulary with descriptions.",
         }
 
+    # Validate date format. "" is the explicit clear sentinel and skips format check.
+    if date is not None and date != "" and not DATE_RE.match(date):
+        return _invalid_date_error("date", date)
+
     try:
         card = update_card(
-            index, doc_id, type=type, summary=summary, keywords=keywords, headings=headings
+            index,
+            doc_id,
+            type=type,
+            summary=summary,
+            keywords=keywords,
+            headings=headings,
+            date=date,
         )
     except KeyError:
         return {"error": f"Document not found: {doc_id}", "hint": "Check doc_id or run reindex()."}
@@ -876,6 +991,8 @@ def update_index_tool(
         updated_fields.append("keywords")
     if headings is not None:
         updated_fields.append("headings")
+    if date is not None:
+        updated_fields.append("date")
 
     return {
         "doc_id": doc_id,

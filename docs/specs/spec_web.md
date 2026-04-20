@@ -73,7 +73,7 @@ Extracts state management from `server.py` global pattern into a class:
 |-------|-------------|
 | `GET /api/cards` | Filtered card list partial |
 | `GET /api/cards/{id}/edit` | Edit form partial |
-| `POST /api/cards/{id}/save` | Save → view partial |
+| `POST /api/cards/{id}/save` | Save → view partial. Accepts `type`, `summary`, `keywords`, `headings`, `date`. Empty `date` clears it; non-empty `date` must match `YYYY-MM-DD` (validated via `models.DATE_RE`) or a toast error is returned. |
 | `POST /api/cards/{id}/cancel` | Cancel → view partial |
 | `POST /api/search` | Search results partial |
 | `POST /api/reindex` | Reindex action (mode param) |

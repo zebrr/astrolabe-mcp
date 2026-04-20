@@ -41,9 +41,10 @@ Entry point. Returns projects, document types, index stats.
 - `document_types` from real index (only assigned types), descriptions from doc_types.yaml
 - `desync_documents`: global count of cards where file missing on disk (project in config)
 - `diverged_documents`: global count of cards with non-empty `diverged_from`
-- Each `ProjectSummary` includes `desync_count` and `diverged_count` — per-project counts
+- `dated_documents`: global count of cards where `date is not None`
+- Each `ProjectSummary` includes `desync_count`, `diverged_count`, and `dated_count` — per-project counts
 
-### `list_docs(project?, type?, stale?, desync?, diverged?, limit?, offset?) -> dict envelope`
+### `list_docs(project?, type?, stale?, desync?, diverged?, date_from?, date_to?, sort?, limit?, offset?) -> dict envelope`
 
 List document cards with optional filters and pagination.
 - `limit: int | None = None` — max cards to return. `None` → `config.default_list_limit` (default 50). Agent can override per-call.
@@ -51,21 +52,27 @@ List document cards with optional filters and pagination.
 - `stale=true`: only cards where `is_stale or is_empty`
 - `desync=true`: only cards whose files are missing on disk (runtime file existence check via `_is_desync()`)
 - `diverged=true`: only cards with non-empty `diverged_from`
+- `date_from`, `date_to`: inclusive YYYY-MM-DD bounds on `card.date`. Cards with `date=None` are **excluded** when at least one bound is set. Invalid format returns error dict.
+- `sort`: `"date_desc"` | `"date_asc"` | `None` (default — insertion order). Cards with `date=None` always sort to the **end** of the result (independent of direction).
 - Filters are AND-combined: `stale=true, desync=true` returns cards matching both conditions
 - Pass-through cards (project not in config) are never desync
 - Returns envelope: `{total, limit, offset, result: [card_dicts], hint?}`
 - Card dicts contain: doc_id, project, type, filename, summary, keywords. **No timestamps** (modified/enriched_at stripped — use `get_card()` for full metadata).
+- **Date**: if `card.date` is non-null, included in the card dict as `date: "YYYY-MM-DD"`. Absent otherwise.
 - **Content dedup**: cards with duplicates in other locations get `has_copies: true` field. Absent when no copies exist.
 - **Divergence**: cards with non-empty `diverged_from` get the list echoed as `diverged_from: [doc_id, ...]`. Absent when clean.
 - When `total > offset + limit` (truncated): `hint` key with adaptive guidance — shows counts by unused filter axis, suggests narrowing, shows next page offset.
 - Tip in docstring: use `get_cosmos()` first for project overview and counts. Narrow by project/type before browsing.
 
-### `search_docs(query, project?, type?, max_results?) -> dict envelope`
+### `search_docs(query, project?, type?, date_from?, date_to?, sort?, max_results?) -> dict envelope`
 
 Search by query with field weights. Delegates to `search.search()`.
 - `max_results: int | None = None` — max results to return. `None` → `config.default_search_limit` (default 20). Agent can override per-call.
-- `search()` API unchanged — server calls it, takes `len()` as total, slices `[:max_results]`.
+- `date_from`, `date_to`: inclusive YYYY-MM-DD bounds, passed through to `search.search()`. Invalid format returns error dict.
+- `sort`: `"relevance"` (default) | `"date_desc"` | `"date_asc"`. On date sorts, cards with `date=None` sort to the end; relevance becomes a secondary tiebreak for cards with equal dates.
+- `search()` API extended — server passes date bounds through, takes `len()` as total, slices `[:max_results]` after any re-sort.
 - **Content dedup**: results with the same `content_hash` are collapsed — only the first (highest relevance) is returned. `total` reflects post-dedup count.
+- **Date**: if a result's source card has `date` set, included in the result dict as `date: "YYYY-MM-DD"`. Absent otherwise.
 - Returns envelope: `{total, max_results, result: [SearchResult dicts], hint?}`
 - When `total > max_results` (truncated): `hint` key suggesting project/type filter or more specific query.
 - Tip in docstring: use specific multi-word queries for better results.
@@ -74,6 +81,7 @@ Search by query with field weights. Delegates to `search.search()`.
 
 Index card metadata for a specific document. No file content.
 - Includes `stale: bool` flag (true if file content changed since enrichment)
+- **Date**: if `card.date` is non-null, included as `date: "YYYY-MM-DD"`. Absent otherwise.
 - **Content dedup**: if document has copies (same `content_hash`), includes `copies: [doc_id, ...]` listing other locations. Absent when no copies exist.
 - **Divergence**: if `diverged_from` is non-empty, includes `diverged_from: [doc_id, ...]` — former siblings whose hash no longer matches. Absent when clean.
 - Raises error if doc_id not found
@@ -87,10 +95,12 @@ Read document content from disk. Delegates to `reader.read_file()`.
 - Raises error if doc_id not found or file missing
 - Tip in docstring: use `get_card()` first to check metadata and headings before reading full file. Use section/range for large files.
 
-### `update_index(doc_id, type?, summary?, keywords?, headings?) -> update confirmation`
+### `update_index(doc_id, type?, summary?, keywords?, headings?, date?) -> update confirmation`
 
 Agent enriches a card. Delegates to `index.update_card()`, then saves to the correct storage.
 - **Type validation**: if `type` is provided and `_doc_types` is non-empty, validates that `type` exists in `_doc_types` keys. Returns error: `"Unknown type '{type}'. Available types: [...]"` if not found.
+- **Date validation**: if `date` is provided, must match `^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$` (strict YYYY-MM-DD). Returns error dict on mismatch: `"Invalid date format '{date}'. Expected YYYY-MM-DD."` Regex lives in `models.DATE_RE` and is reused by the Web UI.
+- **Date clear**: passing `date=""` (empty string) clears an existing date (`card.date = None`). `date=None` means "don't touch". Any other non-matching string fails validation.
 - **Save routing**: determines storage by `config.is_private(card.project)` → `_private_storage.save_card()` or `_storage.save_card()`
 - Returns updated fields list + enriched_at timestamp
 - SQLite: single INSERT OR REPLACE (~1KB). JSON: full file rewrite.

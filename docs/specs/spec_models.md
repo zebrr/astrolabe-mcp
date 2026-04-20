@@ -62,12 +62,22 @@ class DocCard(BaseModel):
     headings: list[str] | None = None
     summary: str | None = None
     keywords: list[str] | None = None
+    date: str | None = None                   # YYYY-MM-DD, semantic document date
     enriched_at: datetime | None = None
     enriched_content_hash: str | None = None  # content_hash snapshot at enrichment time
 
     # Divergence tracking (null until a duplicate group splits)
     diverged_from: list[str] | None = None    # former siblings (doc_ids) whose hash no longer matches
 ```
+
+Date semantics:
+- `date` is a **semantic content date** (when the event happened, period ended, document was issued) — distinct from `modified` (file mtime) and `enriched_at` (enrichment time).
+- Format is strictly `YYYY-MM-DD`. Partial dates (YYYY-MM, YYYY) are not accepted — skill leaves the field empty instead.
+- For documents covering a range (statements, reports), the **end date** is stored.
+- Optional: enrichment proceeds without `date` if the document has no identifiable date.
+- Format validation lives at the write layers (`update_index_tool`, `routes_api.card_save`) — the model accepts any string. The model layer doesn't re-validate to keep SQLite roundtrips trivial.
+- Shared `DATE_RE` (re.Pattern) is exported from `models.py` so MCP tool layer and Web UI reuse one regex.
+- Clear semantics: `update_card` / `update_index_tool` / Web form accept the empty string `""` as the explicit clear sentinel for `date` (sets it back to `None`). `None` means "don't touch". Valid `YYYY-MM-DD` sets the value.
 
 Computed properties:
 - `doc_id: str` — `"{project}::{rel_path}"`
@@ -104,8 +114,11 @@ class ProjectSummary(BaseModel):
     id: str
     doc_count: int
     enriched_count: int
+    stale_count: int = 0
+    empty_count: int = 0
     desync_count: int = 0          # files missing on disk (runtime check)
     diverged_count: int = 0        # cards with non-empty diverged_from
+    dated_count: int = 0           # cards with non-null date
     last_indexed: datetime
 ```
 
@@ -134,6 +147,9 @@ class CosmosResponse(BaseModel):
     empty_documents: int
     desync_documents: int = 0      # files missing on disk (project in config)
     diverged_documents: int = 0    # cards with non-empty diverged_from
+    dated_documents: int = 0       # cards with non-null date
+    embeddings_enabled: bool = False
+    embedded_chunks: int = 0
     projects: list[ProjectSummary]
     document_types: list[TypeSummary]
 ```

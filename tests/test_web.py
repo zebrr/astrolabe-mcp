@@ -197,6 +197,60 @@ class TestCardEdit:
         assert resp.status_code == 200
         assert "Unknown type" in resp.text
 
+    def test_edit_form_has_date_input(self, client: TestClient) -> None:
+        resp = client.get("/api/cards/test-project::README.md/edit")
+        assert resp.status_code == 200
+        assert 'name="date"' in resp.text
+        assert 'type="date"' in resp.text
+
+    def test_save_sets_date(self, client: TestClient, app_state: AppState) -> None:
+        resp = client.post(
+            "/api/cards/test-project::README.md/save",
+            data={
+                "type": "document",
+                "summary": "x",
+                "keywords": "",
+                "headings": "",
+                "date": "2025-11-30",
+            },
+        )
+        assert resp.status_code == 200
+        card = app_state.index.documents["test-project::README.md"]
+        assert card.date == "2025-11-30"
+        assert "2025-11-30" in resp.text  # shown in view-mode badge
+
+    def test_save_clears_date_when_empty(self, client: TestClient, app_state: AppState) -> None:
+        # First set a date.
+        app_state.index.documents["test-project::README.md"].date = "2025-11-30"
+
+        resp = client.post(
+            "/api/cards/test-project::README.md/save",
+            data={
+                "type": "document",
+                "summary": "x",
+                "keywords": "",
+                "headings": "",
+                "date": "",
+            },
+        )
+        assert resp.status_code == 200
+        card = app_state.index.documents["test-project::README.md"]
+        assert card.date is None
+
+    def test_save_invalid_date_returns_toast(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/cards/test-project::README.md/save",
+            data={
+                "type": "document",
+                "summary": "x",
+                "keywords": "",
+                "headings": "",
+                "date": "30.11.2025",
+            },
+        )
+        assert resp.status_code == 200
+        assert "Invalid date" in resp.text
+
     def test_cancel_edit(self, client: TestClient) -> None:
         resp = client.post("/api/cards/test-project::README.md/cancel")
         assert resp.status_code == 200

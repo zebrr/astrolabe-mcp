@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astrolabe-mcp"
-version = "0.9.3"
+version = "0.10.0"
 description = "MCP server for transparent knowledge layer across multiple projects"
 requires-python = ">=3.11"
 dependencies = [

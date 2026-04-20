@@ -693,3 +693,114 @@ class TestSqliteSpecific:
         assert loaded is not None
         loaded_card = list(loaded.documents.values())[0]
         assert loaded_card.diverged_from == ["other::a.md", "other::b.md"]
+
+    def test_schema_migration_adds_date(self, tmp_path: Path) -> None:
+        """Opening a DB without date column auto-migrates (v0.10.0)."""
+        import sqlite3 as _sqlite3
+
+        db_path = tmp_path / "legacy_no_date.db"
+        conn = _sqlite3.connect(str(db_path))
+        # Simulate a v0.9.x DB: has diverged_from, but no date
+        conn.executescript("""
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE documents (
+                doc_id TEXT PRIMARY KEY, project TEXT NOT NULL,
+                filename TEXT NOT NULL, rel_path TEXT NOT NULL,
+                size INTEGER NOT NULL, modified TEXT NOT NULL,
+                content_hash TEXT NOT NULL, type TEXT,
+                headings TEXT, summary TEXT, keywords TEXT, enriched_at TEXT,
+                enriched_content_hash TEXT, diverged_from TEXT
+            );
+        """)
+        conn.execute("INSERT INTO meta VALUES ('version', '0.9.3')")
+        conn.execute("INSERT INTO meta VALUES ('indexed_at', '2026-01-01T00:00:00+00:00')")
+        conn.execute("""
+            INSERT INTO documents VALUES (
+                'proj::doc.md', 'proj', 'doc.md', 'doc.md', 100,
+                '2026-01-01T00:00:00+00:00', 'abc123',
+                'spec', NULL, 'A spec', NULL,
+                '2026-01-02T00:00:00+00:00', 'abc123', NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+        # Open with new SqliteStorage — should auto-migrate
+        s = SqliteStorage(db_path)
+        loaded = s.load()
+        assert loaded is not None
+        card = loaded.documents["proj::doc.md"]
+        assert card.date is None  # legacy row
+        assert card.type == "spec"
+
+        # Round-trip with date set
+        card.date = "2025-11-30"
+        s.save_card(card, loaded.indexed_at)
+
+        loaded2 = s.load()
+        assert loaded2 is not None
+        assert loaded2.documents["proj::doc.md"].date == "2025-11-30"
+
+    def test_date_roundtrip(self, tmp_path: Path) -> None:
+        """date field survives save/load in SQLite."""
+        s = SqliteStorage(tmp_path / "index.db")
+        card = _make_card(enriched=True)
+        card.date = "2025-11-30"
+
+        s.save(_make_index([card]))
+        loaded = s.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.date == "2025-11-30"
+
+    def test_null_date_preserved(self, tmp_path: Path) -> None:
+        """date=None roundtrips correctly."""
+        s = SqliteStorage(tmp_path / "index.db")
+        card = _make_card(enriched=True)
+        assert card.date is None
+        s.save(_make_index([card]))
+        loaded = s.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.date is None
+
+
+class TestJsonDateRoundtrip:
+    """date field roundtrip in JSON backend."""
+
+    def test_date_roundtrip_json(self, tmp_path: Path) -> None:
+        s = JsonStorage(tmp_path / "index.json")
+        card = _make_card(enriched=True)
+        card.date = "2025-11-30"
+        s.save(_make_index([card]))
+        loaded = s.load()
+        assert loaded is not None
+        loaded_card = list(loaded.documents.values())[0]
+        assert loaded_card.date == "2025-11-30"
+
+    def test_legacy_json_no_date_field(self, tmp_path: Path) -> None:
+        """Old JSON index without date field loads with date=None."""
+        index_path = tmp_path / ".doc-index.json"
+        # Hand-craft a legacy JSON without the date field
+        index_path.write_text(
+            """{
+              "version": "0.9.3",
+              "indexed_at": "2026-01-01T00:00:00+00:00",
+              "documents": {
+                "proj::doc.md": {
+                  "project": "proj",
+                  "filename": "doc.md",
+                  "rel_path": "doc.md",
+                  "size": 100,
+                  "modified": "2026-01-01T00:00:00+00:00",
+                  "content_hash": "abc123",
+                  "type": "spec",
+                  "summary": "A spec"
+                }
+              }
+            }"""
+        )
+        s = JsonStorage(index_path)
+        loaded = s.load()
+        assert loaded is not None
+        assert loaded.documents["proj::doc.md"].date is None

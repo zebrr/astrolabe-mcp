@@ -170,10 +170,20 @@ class AppState:
         summary: str | None = None,
         keywords: list[str] | None = None,
         headings: list[str] | None = None,
+        date: str | None = None,
     ) -> DocCard:
-        """Update card enrichment and persist."""
+        """Update card enrichment and persist.
+
+        `date` is tri-state: None = untouch, "" = clear, "YYYY-MM-DD" = set.
+        """
         card = update_card(
-            self.index, doc_id, type=type, summary=summary, keywords=keywords, headings=headings
+            self.index,
+            doc_id,
+            type=type,
+            summary=summary,
+            keywords=keywords,
+            headings=headings,
+            date=date,
         )
         self.save_card(card)
         return card

@@ -1,5 +1,6 @@
 """Data models for astrolabe-mcp."""
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -7,6 +8,10 @@ from typing import Literal
 from pydantic import BaseModel, model_validator
 
 from astrolabe import __version__
+
+# Strict YYYY-MM-DD validator (months 01-12, days 01-31).
+# Shared between MCP tool layer (server.py) and Web UI (routes_api.py).
+DATE_RE: re.Pattern[str] = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
 
 
 class AppConfig(BaseModel):
@@ -67,6 +72,7 @@ class DocCard(BaseModel):
     headings: list[str] | None = None
     summary: str | None = None
     keywords: list[str] | None = None
+    date: str | None = None  # YYYY-MM-DD, semantic document date
     enriched_at: datetime | None = None
     enriched_content_hash: str | None = None
 
@@ -111,6 +117,7 @@ class ProjectSummary(BaseModel):
     empty_count: int = 0
     desync_count: int = 0
     diverged_count: int = 0
+    dated_count: int = 0
     last_indexed: datetime
 
 
@@ -133,6 +140,7 @@ class CosmosResponse(BaseModel):
     empty_documents: int
     desync_documents: int = 0
     diverged_documents: int = 0
+    dated_documents: int = 0
     embeddings_enabled: bool = False
     embedded_chunks: int = 0
     projects: list[ProjectSummary]

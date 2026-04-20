@@ -175,8 +175,16 @@ class TestDocCard:
         assert card.headings is None
         assert card.summary is None
         assert card.keywords is None
+        assert card.date is None
         assert card.enriched_at is None
         assert card.enriched_content_hash is None
+
+    def test_date_field_roundtrip(self) -> None:
+        card = self._make_card(date="2025-11-30")
+        assert card.date == "2025-11-30"
+        data = card.model_dump()
+        restored = DocCard.model_validate(data)
+        assert restored.date == "2025-11-30"
 
     def test_enrichment_fields_set(self) -> None:
         card = self._make_card(
@@ -264,6 +272,25 @@ class TestProjectSummary:
         )
         assert ps.desync_count == 3
 
+    def test_dated_count_default(self) -> None:
+        ps = ProjectSummary(
+            id="my-project",
+            doc_count=10,
+            enriched_count=8,
+            last_indexed=datetime(2026, 3, 6, tzinfo=UTC),
+        )
+        assert ps.dated_count == 0
+
+    def test_dated_count_explicit(self) -> None:
+        ps = ProjectSummary(
+            id="my-project",
+            doc_count=10,
+            enriched_count=8,
+            dated_count=5,
+            last_indexed=datetime(2026, 3, 6, tzinfo=UTC),
+        )
+        assert ps.dated_count == 5
+
 
 class TestCosmosResponse:
     def test_creation(self) -> None:
@@ -290,6 +317,8 @@ class TestCosmosResponse:
         assert len(resp.projects) == 1
         assert resp.projects[0].id == "my-project"
         assert len(resp.document_types) == 1
+        # dated_documents defaults to 0
+        assert resp.dated_documents == 0
 
 
 class TestSearchResult:

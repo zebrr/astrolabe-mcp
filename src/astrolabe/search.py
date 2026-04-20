@@ -69,6 +69,21 @@ def _score_card(card: DocCard, tokens: list[str]) -> float:
     return score
 
 
+def _card_passes_date_filter(card: DocCard, date_from: str | None, date_to: str | None) -> bool:
+    """Check if a card passes the date range filter.
+
+    Cards with `date=None` are excluded when at least one bound is set.
+    Otherwise pass. Lexicographic string comparison is safe for YYYY-MM-DD.
+    """
+    if date_from is None and date_to is None:
+        return True
+    if card.date is None:
+        return False
+    if date_from is not None and card.date < date_from:
+        return False
+    return not (date_to is not None and card.date > date_to)
+
+
 def search(
     cards: Iterable[DocCard],
     query: str,
@@ -76,6 +91,8 @@ def search(
     project: str | None = None,
     type: str | None = None,
     type_boosts: dict[str, float] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> list[SearchResult]:
     """Search enriched cards by query with bilingual stem matching.
 
@@ -86,6 +103,8 @@ def search(
         type: Optional document type filter.
         type_boosts: Optional dict of type_name → multiplier from doc_types.yaml.
             Types not in the dict default to 1.0.
+        date_from: Optional inclusive lower bound (YYYY-MM-DD) on card.date.
+        date_to: Optional inclusive upper bound (YYYY-MM-DD) on card.date.
 
     Returns:
         List of SearchResult sorted by relevance descending.
@@ -101,6 +120,8 @@ def search(
         if project is not None and card.project != project:
             continue
         if type is not None and card.type != type:
+            continue
+        if not _card_passes_date_filter(card, date_from, date_to):
             continue
 
         score = _score_card(card, tokens)
@@ -155,6 +176,8 @@ def hybrid_search(
     project: str | None = None,
     type: str | None = None,
     type_boosts: dict[str, float] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> list[SearchResult]:
     """Hybrid search combining stem matching and embedding similarity.
 
@@ -168,6 +191,7 @@ def hybrid_search(
         project: Optional project filter.
         type: Optional document type filter.
         type_boosts: Optional dict of type_name -> multiplier.
+        date_from, date_to: Optional inclusive YYYY-MM-DD bounds on card.date.
 
     Returns:
         List of SearchResult sorted by relevance descending.
@@ -184,6 +208,8 @@ def hybrid_search(
         if project is not None and card.project != project:
             continue
         if type is not None and card.type != type:
+            continue
+        if not _card_passes_date_filter(card, date_from, date_to):
             continue
         card_map[card.doc_id] = card
         score = _score_card(card, tokens)

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
 from astrolabe.index import build_hash_map
+from astrolabe.models import DATE_RE
 from astrolabe.web.app import get_state
 
 router = APIRouter()
@@ -88,8 +89,13 @@ async def card_save(
     summary: str = Form(""),
     keywords: str = Form(""),
     headings: str = Form(""),
+    date: str = Form(""),
 ) -> Any:
-    """Save card edit and return updated view partial."""
+    """Save card edit and return updated view partial.
+
+    `date` field semantics: empty form value clears the card's date;
+    a non-empty value must match YYYY-MM-DD (bad format → toast error).
+    """
     state = get_state(request)
 
     # Parse form values
@@ -101,6 +107,8 @@ async def card_save(
     card_headings = (
         [h.strip() for h in headings.split(",") if h.strip()] if headings.strip() else None
     )
+    # date: "" = explicit clear (user erased the date field); non-empty must validate.
+    card_date = date.strip()
 
     # Validate type
     if card_type and state.doc_types and card_type not in state.doc_types:
@@ -115,6 +123,18 @@ async def card_save(
             },
         )
 
+    # Validate date format (empty string passes — it's the clear sentinel).
+    if card_date and not DATE_RE.match(card_date):
+        templates = request.app.state.templates
+        return templates.TemplateResponse(
+            "partials/toast.html",
+            {
+                "request": request,
+                "message": f"Invalid date '{card_date}'. Expected YYYY-MM-DD.",
+                "level": "error",
+            },
+        )
+
     try:
         card = state.do_update_card(
             doc_id,
@@ -122,6 +142,7 @@ async def card_save(
             summary=card_summary,
             keywords=card_keywords,
             headings=card_headings,
+            date=card_date,
         )
     except KeyError:
         return HTMLResponse("Card not found", status_code=404)

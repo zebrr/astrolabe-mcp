@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS documents (
     keywords              TEXT,
     enriched_at           TEXT,
     enriched_content_hash TEXT,
-    diverged_from         TEXT
+    diverged_from         TEXT,
+    date                  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_project ON documents(project);
@@ -74,6 +75,7 @@ def _card_to_row(card: DocCard) -> tuple[object, ...]:
         card.enriched_at.isoformat() if card.enriched_at is not None else None,
         card.enriched_content_hash,
         json.dumps(card.diverged_from) if card.diverged_from else None,
+        card.date,
     )
 
 
@@ -83,6 +85,8 @@ def _row_to_card(row: sqlite3.Row) -> DocCard:
     keywords_raw = row["keywords"]
     enriched_raw = row["enriched_at"]
     diverged_raw = row["diverged_from"]
+    # `date` column is guaranteed to exist after __init__ migration (v0.10.0)
+    date_raw = row["date"]
 
     return DocCard(
         project=row["project"],
@@ -95,6 +99,7 @@ def _row_to_card(row: sqlite3.Row) -> DocCard:
         headings=json.loads(headings_raw) if headings_raw is not None else None,
         summary=row["summary"],
         keywords=json.loads(keywords_raw) if keywords_raw is not None else None,
+        date=date_raw,
         enriched_at=datetime.fromisoformat(enriched_raw) if enriched_raw is not None else None,
         enriched_content_hash=row["enriched_content_hash"],
         diverged_from=json.loads(diverged_raw) if diverged_raw else None,
@@ -105,8 +110,8 @@ _INSERT_SQL = """\
 INSERT OR REPLACE INTO documents
     (doc_id, project, filename, rel_path, size, modified,
      content_hash, type, headings, summary, keywords, enriched_at,
-     enriched_content_hash, diverged_from)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     enriched_content_hash, diverged_from, date)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -131,6 +136,9 @@ class SqliteStorage:
         # Migrate existing databases: add diverged_from column
         with contextlib.suppress(sqlite3.OperationalError):
             self._conn.execute("ALTER TABLE documents ADD COLUMN diverged_from TEXT")
+        # Migrate existing databases: add date column (v0.10.0)
+        with contextlib.suppress(sqlite3.OperationalError):
+            self._conn.execute("ALTER TABLE documents ADD COLUMN date TEXT")
 
     def _retry_write(self, fn: Callable[[], None]) -> None:
         """Execute a write operation with retry on transient errors.

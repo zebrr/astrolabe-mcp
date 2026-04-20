@@ -245,6 +245,7 @@ def reindex(
                 fresh_card.headings = old_card.headings
                 fresh_card.summary = old_card.summary
                 fresh_card.keywords = old_card.keywords
+                fresh_card.date = old_card.date
                 fresh_card.enriched_at = old_card.enriched_at
                 fresh_card.enriched_content_hash = old_card.enriched_content_hash
                 new_documents[doc_id] = fresh_card
@@ -304,6 +305,7 @@ def reindex(
                 new_card.summary = old_card.summary
                 new_card.keywords = old_card.keywords
                 new_card.headings = old_card.headings
+                new_card.date = old_card.date
                 new_card.enriched_at = old_card.enriched_at
                 new_card.enriched_content_hash = new_card.content_hash
                 # Remove desync card from index
@@ -393,6 +395,7 @@ def update_card(
     summary: str | None = None,
     keywords: list[str] | None = None,
     headings: list[str] | None = None,
+    date: str | None = None,
 ) -> DocCard:
     """Update enrichment fields on a card.
 
@@ -411,6 +414,9 @@ def update_card(
         card.keywords = keywords
     if headings is not None:
         card.headings = headings
+    if date is not None:
+        # "" is an explicit clear sentinel; any other non-None string is a value.
+        card.date = date if date != "" else None
     card.enriched_at = datetime.now(UTC)
     card.enriched_content_hash = card.content_hash
     return card

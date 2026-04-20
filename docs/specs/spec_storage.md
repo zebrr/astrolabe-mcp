@@ -225,7 +225,8 @@ CREATE TABLE IF NOT EXISTS documents (
     keywords              TEXT,
     enriched_at           TEXT,
     enriched_content_hash TEXT,
-    diverged_from         TEXT   -- JSON array of doc_ids, NULL when no divergence
+    diverged_from         TEXT,  -- JSON array of doc_ids, NULL when no divergence
+    date                  TEXT   -- YYYY-MM-DD semantic content date, NULL when unknown
 );
 
 CREATE INDEX IF NOT EXISTS idx_project ON documents(project);
@@ -236,6 +237,7 @@ CREATE INDEX IF NOT EXISTS idx_type ON documents(type);
 
 - **Timestamps**: ISO 8601 strings (`datetime.isoformat()` / `datetime.fromisoformat()`)
 - **headings, keywords, diverged_from**: `json.dumps(list)` / `json.loads(str)`, NULL if None or empty
+- **date**: `YYYY-MM-DD` string, stored verbatim, NULL when None
 - **size**: INTEGER (native SQLite)
 - **All other fields**: TEXT
 
@@ -248,7 +250,7 @@ with contextlib.suppress(sqlite3.OperationalError):
     self._conn.execute("ALTER TABLE documents ADD COLUMN diverged_from TEXT")
 ```
 
-Used historically for `enriched_content_hash` and now for `diverged_from`. Pre-existing databases without the column load with `diverged_from = None` (no divergence flag).
+Used historically for `enriched_content_hash`, `diverged_from`, and now for `date`. Pre-existing databases without the column load with the corresponding field as `None`.
 
 ### Connection management
 

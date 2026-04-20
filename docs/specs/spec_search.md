@@ -8,7 +8,7 @@ Bilingual stem-based search (EN + RU) over enriched DocCards with field weights.
 
 ## Public API
 
-### `search(cards: Iterable[DocCard], query: str, *, project: str | None = None, type: str | None = None) -> list[SearchResult]`
+### `search(cards: Iterable[DocCard], query: str, *, project: str | None = None, type: str | None = None, type_boosts: dict[str, float] | None = None, date_from: str | None = None, date_to: str | None = None) -> list[SearchResult]`
 
 Search enriched cards by query.
 
@@ -17,6 +17,8 @@ Search enriched cards by query.
 - `query`: search query string
 - `project`: optional filter
 - `type`: optional filter
+- `type_boosts`: optional dict `type_name → multiplier` from doc_types.yaml
+- `date_from`, `date_to`: optional YYYY-MM-DD bounds for `card.date` (inclusive). Cards with `date=None` are **excluded** when at least one bound is set.
 
 **Returns:** list of SearchResult, sorted by relevance descending. Only cards with relevance > 0 are returned.
 
@@ -34,7 +36,12 @@ Search enriched cards by query.
 - No exact bonus (removed — stem match already handles it)
 - Cards without enrichment (`enriched_at is None`) still match on `filename`
 - Relevance score is sum of all token-field matches
-- Filters (project, type) applied before scoring
+- Filters (project, type, date_from, date_to) applied before scoring
+- Date bounds use lexicographic string comparison (safe because `YYYY-MM-DD` is lexicographically chronological)
+
+### `hybrid_search(...)` extends the signature with the same `date_from` / `date_to` parameters.
+
+Date filtering applies in both the stem and embedding phases (an embedding match is ignored if the corresponding card fails the date filter).
 
 ## Dependencies
 

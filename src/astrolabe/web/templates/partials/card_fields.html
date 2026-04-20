@@ -39,6 +39,11 @@
                 <input type="text" name="headings"
                        value="{{ card.headings | join(', ') if card.headings else '' }}">
             </label>
+
+            <label>
+                Date <small>(YYYY-MM-DD, clear to remove)</small>
+                <input type="date" name="date" value="{{ card.date or '' }}">
+            </label>
         </div>
         <div class="edit-actions">
             <button type="submit" class="compact-btn primary-btn">Save</button>
@@ -87,6 +92,10 @@
                     <em>not set</em>
                 {% endif %}
             </td>
+        </tr>
+        <tr>
+            <td class="field-label">Date</td>
+            <td>{% if card.date %}<span class="badge">{{ card.date }}</span>{% else %}<em>not set</em>{% endif %}</td>
         </tr>
     </table>
 </section>

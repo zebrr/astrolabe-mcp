@@ -15,6 +15,7 @@ def _card(
     summary: str | None = None,
     keywords: list[str] | None = None,
     headings: list[str] | None = None,
+    date: str | None = None,
     enriched: bool = False,
 ) -> DocCard:
     return DocCard(
@@ -28,6 +29,7 @@ def _card(
         summary=summary,
         keywords=keywords,
         headings=headings,
+        date=date,
         enriched_at=datetime(2026, 3, 6, tzinfo=UTC) if enriched else None,
     )
 
@@ -161,3 +163,87 @@ class TestSearch:
         )
         results = search([card_fn, card_sm], "search")
         assert results[0].doc_id == card_sm.doc_id
+
+
+class TestSearchDateFilter:
+    def _dated_cards(self) -> list[DocCard]:
+        return [
+            _card(
+                filename="a.md",
+                rel_path="a.md",
+                keywords=["statement"],
+                date="2025-10-30",
+                enriched=True,
+            ),
+            _card(
+                filename="b.md",
+                rel_path="b.md",
+                keywords=["statement"],
+                date="2025-11-15",
+                enriched=True,
+            ),
+            _card(
+                filename="c.md",
+                rel_path="c.md",
+                keywords=["statement"],
+                date="2025-11-30",
+                enriched=True,
+            ),
+            _card(
+                filename="d.md",
+                rel_path="d.md",
+                keywords=["statement"],
+                date=None,  # undated
+                enriched=True,
+            ),
+        ]
+
+    def test_no_filter_includes_undated(self) -> None:
+        results = search(self._dated_cards(), "statement")
+        assert len(results) == 4
+
+    def test_date_from_inclusive(self) -> None:
+        results = search(self._dated_cards(), "statement", date_from="2025-11-15")
+        doc_ids = {r.doc_id for r in results}
+        assert doc_ids == {"proj::b.md", "proj::c.md"}
+
+    def test_date_to_inclusive(self) -> None:
+        results = search(self._dated_cards(), "statement", date_to="2025-11-15")
+        doc_ids = {r.doc_id for r in results}
+        assert doc_ids == {"proj::a.md", "proj::b.md"}
+
+    def test_date_range(self) -> None:
+        results = search(
+            self._dated_cards(), "statement", date_from="2025-11-01", date_to="2025-11-30"
+        )
+        doc_ids = {r.doc_id for r in results}
+        assert doc_ids == {"proj::b.md", "proj::c.md"}
+
+    def test_undated_excluded_when_filter_set(self) -> None:
+        """Cards with date=None are excluded when any bound is set."""
+        results = search(self._dated_cards(), "statement", date_from="2025-01-01")
+        doc_ids = {r.doc_id for r in results}
+        assert "proj::d.md" not in doc_ids
+
+    def test_filter_combines_with_project(self) -> None:
+        cards = [
+            _card(
+                project="a",
+                filename="x.md",
+                rel_path="x.md",
+                keywords=["statement"],
+                date="2025-11-30",
+                enriched=True,
+            ),
+            _card(
+                project="b",
+                filename="y.md",
+                rel_path="y.md",
+                keywords=["statement"],
+                date="2025-11-30",
+                enriched=True,
+            ),
+        ]
+        results = search(cards, "statement", project="a", date_from="2025-11-01")
+        assert len(results) == 1
+        assert results[0].project == "a"

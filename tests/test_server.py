@@ -882,3 +882,166 @@ class TestGetCardDivergenceField:
     def test_diverged_from_absent_when_clean(self, server_env: AppConfig) -> None:
         result = srv.get_card("test-project::README.md")
         assert "diverged_from" not in result
+
+
+class TestDateField:
+    """Tests for the semantic `date` field (v0.10.0)."""
+
+    def test_update_index_accepts_date(self, server_env: AppConfig) -> None:
+        result = srv.update_index_tool(
+            doc_id="test-project::README.md",
+            type="reference",
+            date="2025-11-30",
+        )
+        assert result["status"] == "updated"
+        assert "date" in result["updated_fields"]
+
+        card_resp = srv.get_card("test-project::README.md")
+        assert card_resp.get("date") == "2025-11-30"
+
+    def test_update_index_rejects_bad_date_format(self, server_env: AppConfig) -> None:
+        cases = ["30.11.2025", "2025-13-01", "2025-11-32", "2025/11/30", "November 30 2025"]
+        for bad in cases:
+            result = srv.update_index_tool(
+                doc_id="test-project::README.md", type="reference", date=bad
+            )
+            assert "error" in result, f"should reject: {bad!r}"
+            assert "date" in result["error"].lower()
+
+    def test_update_index_empty_string_clears_date(self, server_env: AppConfig) -> None:
+        """Passing date='' to the tool clears an existing date."""
+        srv.update_index_tool(
+            doc_id="test-project::README.md", type="reference", date="2025-11-30"
+        )
+        assert srv.get_card("test-project::README.md").get("date") == "2025-11-30"
+
+        result = srv.update_index_tool(doc_id="test-project::README.md", date="")
+        assert result["status"] == "updated"
+        assert "date" not in srv.get_card("test-project::README.md")
+
+    def test_update_index_accepts_no_date(self, server_env: AppConfig) -> None:
+        """Omitting date keeps the call valid (existing use case)."""
+        result = srv.update_index_tool(
+            doc_id="test-project::README.md", type="reference", summary="A readme"
+        )
+        assert result["status"] == "updated"
+        card_resp = srv.get_card("test-project::README.md")
+        assert "date" not in card_resp  # absent since not set
+
+    def test_list_docs_filter_by_date(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(doc_id=docs[0], type="reference", date="2025-10-15")
+        srv.update_index_tool(doc_id=docs[1], type="reference", date="2025-11-30")
+        srv.update_index_tool(doc_id=docs[2], type="reference", date="2025-12-05")
+
+        result = srv.list_docs(date_from="2025-11-01", date_to="2025-11-30")
+        assert result["total"] == 1
+        assert result["result"][0]["date"] == "2025-11-30"
+
+    def test_list_docs_undated_excluded_with_filter(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(doc_id=docs[0], type="reference", date="2025-11-30")
+        # Leave docs[1..4] undated.
+
+        result = srv.list_docs(date_from="2025-01-01")
+        assert result["total"] == 1
+
+    def test_list_docs_no_date_filter_includes_all(self, server_env: AppConfig) -> None:
+        result = srv.list_docs()
+        assert result["total"] == 5  # all fixture docs
+
+    def test_list_docs_invalid_date_format_returns_error(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(date_from="30.11.2025")
+        assert "error" in result
+
+    def test_list_docs_sort_date_desc(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(doc_id=docs[0], type="reference", date="2025-10-15")
+        srv.update_index_tool(doc_id=docs[1], type="reference", date="2025-11-30")
+        srv.update_index_tool(doc_id=docs[2], type="reference", date="2025-12-05")
+
+        result = srv.list_docs(sort="date_desc")
+        dates = [d.get("date") for d in result["result"]]
+        # First three entries: dated (sorted desc), then undated (None)
+        assert dates[0] == "2025-12-05"
+        assert dates[1] == "2025-11-30"
+        assert dates[2] == "2025-10-15"
+        # Undated cards sort to the end
+        assert all(d is None for d in dates[3:])
+
+    def test_list_docs_sort_date_asc(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(doc_id=docs[0], type="reference", date="2025-12-05")
+        srv.update_index_tool(doc_id=docs[1], type="reference", date="2025-10-15")
+
+        result = srv.list_docs(sort="date_asc")
+        dates = [d.get("date") for d in result["result"] if d.get("date")]
+        assert dates == ["2025-10-15", "2025-12-05"]
+
+    def test_list_docs_invalid_sort_returns_error(self, server_env: AppConfig) -> None:
+        result = srv.list_docs(sort="name")
+        assert "error" in result
+
+    def test_search_docs_filter_by_date(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(
+            doc_id=docs[0], type="reference", keywords=["common"], date="2025-10-15"
+        )
+        srv.update_index_tool(
+            doc_id=docs[1], type="reference", keywords=["common"], date="2025-11-30"
+        )
+
+        result = srv.search_docs("common", date_from="2025-11-01")
+        assert result["total"] == 1
+        assert result["result"][0]["date"] == "2025-11-30"
+
+    def test_search_docs_sort_date_desc(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(
+            doc_id=docs[0], type="reference", keywords=["common"], date="2025-10-15"
+        )
+        srv.update_index_tool(
+            doc_id=docs[1], type="reference", keywords=["common"], date="2025-12-05"
+        )
+
+        result = srv.search_docs("common", sort="date_desc")
+        dates = [r.get("date") for r in result["result"]]
+        assert dates[0] == "2025-12-05"
+
+    def test_search_docs_invalid_sort_returns_error(self, server_env: AppConfig) -> None:
+        result = srv.search_docs("anything", sort="weird")
+        assert "error" in result
+
+    def test_get_card_includes_date(self, server_env: AppConfig) -> None:
+        srv.update_index_tool(
+            doc_id="test-project::README.md", type="reference", date="2025-11-30"
+        )
+        result = srv.get_card("test-project::README.md")
+        assert result.get("date") == "2025-11-30"
+
+    def test_get_card_omits_date_when_unset(self, server_env: AppConfig) -> None:
+        result = srv.get_card("test-project::README.md")
+        assert "date" not in result
+
+
+class TestCosmosDatedCounter:
+    def test_dated_zero_by_default(self, server_env: AppConfig) -> None:
+        result = srv.get_cosmos()
+        assert result["dated_documents"] == 0
+        assert result["projects"][0]["dated_count"] == 0
+
+    def test_dated_counter_increments(self, server_env: AppConfig) -> None:
+        assert srv._index is not None
+        docs = list(srv._index.documents.keys())
+        srv.update_index_tool(doc_id=docs[0], type="reference", date="2025-11-30")
+        srv.update_index_tool(doc_id=docs[1], type="reference", date="2025-10-15")
+
+        result = srv.get_cosmos()
+        assert result["dated_documents"] == 2
+        assert result["projects"][0]["dated_count"] == 2
