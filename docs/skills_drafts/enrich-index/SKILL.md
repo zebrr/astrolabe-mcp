@@ -84,6 +84,8 @@ Some documents carry a meaningful **content date** — a statement period, a rec
 
 **Format:** strictly `YYYY-MM-DD`. The server rejects any other format.
 
+**Type rule (overrides all others):** never set `date` on `worklog`-type documents (PLAN, PROGRESS, LOG, _search_log, RESOLUTION, DEFENSE, critic/challenger logs, audit/comparison logs, cycle reports, draft scaffolds, etc.). Worklogs track processes that evolve over time — events get appended, statuses change, decisions are revised. There is no single canonical "as of" date for them, even when the folder name or last event timestamp suggests one. Use git/event timestamps inside the doc instead.
+
 **Rules:**
 - Only fill `date` when you can extract a **full** day (year, month, day). If the document only mentions "ноябрь 2025" or "2025" without a day — omit the field. Don't guess or pad.
 - For documents covering a **range** (e.g. bank statement from 01.11.2025 to 30.11.2025) — use the **end date** (`2025-11-30`). The end date conveys the document's actual "as of" point.
