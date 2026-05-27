@@ -4,13 +4,11 @@
 {% block content %}
 <h3>Search{% if query %}: <span class="subtitle">{{ query }}</span>{% endif %}</h3>
 
-<form hx-post="/api/search" hx-target="#search-results" hx-swap="innerHTML"
+<form class="search-form" hx-post="/api/search" hx-target="#search-results" hx-swap="innerHTML"
       hx-trigger="submit, keyup changed delay:300ms from:#search-query">
-    <div class="grid">
-        <input type="text" name="query" id="search-query"
-               placeholder="Search documents..." value="{{ query or '' }}" autofocus>
-        <button type="submit">Search</button>
-    </div>
+    <input type="text" name="query" id="search-query"
+           placeholder="Search documents..." value="{{ query or '' }}" autofocus>
+    <button type="submit" class="search-btn">Search</button>
 </form>
 
 <div id="search-results">
